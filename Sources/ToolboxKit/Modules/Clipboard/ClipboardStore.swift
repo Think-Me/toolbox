@@ -75,7 +75,7 @@ public actor ClipboardStore {
         let doomed = try await db.query("""
         select id, media_sha from clipboard_items
          where pinned = 0
-         order by last_copied_at asc
+         order by last_copied_at asc, rowid asc
          limit ?
         """, [.int(excess)]) {
             (try $0.string("id"), try $0.optionalString("media_sha"))
@@ -93,11 +93,15 @@ public actor ClipboardStore {
 
     // MARK: 读
 
-    /// 列表顺序：置顶优先，其次最近复制。面板和淘汰都靠这个次序。
+    /// 排序规则。`rowid` 决胜不是可有可无的：时间戳相同的两行（同一 tick 内连续写入、
+    /// 或时钟回跳）若不带决胜，SQLite 会按插入序返回，表现为"刚复制的反而排在后面"。
+    static let orderClause = "order by pinned desc, last_copied_at desc, rowid desc"
+
+    /// 列表顺序：置顶优先，其次最近复制，最后按插入序。
     public func recent(limit: Int) async throws -> [ClipboardItem] {
         try await Self.fetch(db, """
         select * from clipboard_items
-         order by pinned desc, last_copied_at desc
+         \(Self.orderClause)
          limit ?
         """, [.int(limit)])
     }
@@ -109,7 +113,7 @@ public actor ClipboardStore {
         return try await Self.fetch(db, """
         select * from clipboard_items
          where text like ? escape '\\'
-         order by pinned desc, last_copied_at desc
+         \(Self.orderClause)
          limit ?
         """, [.text("%" + Self.escapeLike(trimmed) + "%"), .int(limit)])
     }
