@@ -1,6 +1,24 @@
 import AppKit
 import SwiftUI
 
+/// 设置窗专用窗口。键盘事件统一从 `sendEvent` 漏斗走，而不是依赖某个子视图
+/// 抢到 first responder —— 实测后者在 SwiftUI 里不可靠（SwiftUI 会在重绘时
+/// 自己改 firstResponder，我们设的会被冲掉，表现为"进入录制态但按什么都没反应"）。
+@MainActor
+final class RecordingWindow: NSWindow {
+    /// 返回 true 表示事件已消费，不再往下传。
+    var onKeyEvent: ((NSEvent) -> Bool)?
+    var keyEventLog: ((NSEvent) -> Void)?
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown {
+            keyEventLog?(event)
+            if let onKeyEvent, onKeyEvent(event) { return }
+        }
+        super.sendEvent(event)
+    }
+}
+
 @MainActor
 public final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let model: AppModel
@@ -9,7 +27,7 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
     public init(model: AppModel) {
         self.model = model
         self.restoreToAccessory = true
-        let window = NSWindow(
+        let window = RecordingWindow(
             contentRect: NSRect(x: 0, y: 0, width: 560, height: 420),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered, defer: false)
@@ -19,6 +37,34 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
         window.contentView = NSHostingView(rootView: SettingsRootView(model: model))
         super.init(window: window)
         window.delegate = self
+        let rw = window
+        do {
+            rw.onKeyEvent = { [weak model] event in
+                guard let model, model.isRecording else { return false }
+                model.handleRecordedKey(event)
+                return true
+            }
+            rw.keyEventLog = { [weak self] event in
+                guard CommandLine.arguments.contains("--keylog") else { return }
+                let chars = event.charactersIgnoringModifiers ?? ""
+                Self.log("KEYDOWN code=\(event.keyCode) chars=\"\(chars)\" "
+                       + "mods=\(event.modifierFlags.rawValue) → 转发给录制器\n")
+                _ = self
+            }
+        }
+    }
+
+    static func log(_ s: String) {
+        FileHandle.standardError.write(s.data(using: .utf8)!)
+    }
+
+    /// 诊断：键盘事件到底有没有送到这个窗口。
+    public var focusProbe: String {
+        guard let w = window else { return "no window" }
+        return "isKey=\(w.isKeyWindow) main=\(NSApp.mainWindow.map { String(describing: type(of: $0)) } ?? "nil") "
+             + "keyWindow=\(NSApp.keyWindow.map { String(describing: type(of: $0)) } ?? "nil") "
+             + "firstResponder=\(w.firstResponder.map { String(describing: type(of: $0)) } ?? "nil") "
+             + "appActive=\(NSApp.isActive)"
     }
 
     required init?(coder: NSCoder) { fatalError("不支持从 nib 构造") }

@@ -26,6 +26,10 @@ struct PermissionsTabView: View {
                 }
                 Divider()
             }
+            if let msg = model.provisioningMessage {
+                Text(msg).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             HStack {
                 Button("重新探测") { model.refreshPermissions() }
                 Text("屏幕录制授权后需重启 Toolbox 才生效")

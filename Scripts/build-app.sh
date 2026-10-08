@@ -20,8 +20,18 @@ cp "$BIN" "$APP/Contents/MacOS/Toolbox"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-# 不要加 --options runtime（hardened runtime）：ad-hoc 签名 + hardened 会让
+# 不要加 --options runtime（hardened runtime）：本地签名 + hardened 会让
 # AppleEvents / 辅助功能类调用因为缺 entitlement 而失败。
-codesign --force --sign - --identifier com.ebertwiseman.toolbox "$APP"
+#
+# 签名身份优先用自签证书，理由见 Scripts/create-signing-cert.sh：
+# ad-hoc 的 designated requirement 是 cdhash，每次重建都变 → TCC 授权每次作废。
+IDENTITY="${TOOLBOX_SIGN_IDENTITY:-Toolbox Local Signing}"
+if security find-identity -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
+    echo "signing with: $IDENTITY（TCC 授权可跨重建保留）"
+    codesign --force --sign "$IDENTITY" --identifier com.ebertwiseman.toolbox "$APP"
+else
+    echo "signing with: ad-hoc（⚠️ 每次重建都会掉 TCC 授权，跑一次 ./Scripts/create-signing-cert.sh 可解决）"
+    codesign --force --sign - --identifier com.ebertwiseman.toolbox "$APP"
+fi
 codesign --verify --verbose=2 "$APP" 2>&1 | tail -2
 echo "built $APP  (bin: $BIN)"

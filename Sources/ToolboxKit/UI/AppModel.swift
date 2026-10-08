@@ -14,6 +14,7 @@ public final class AppModel: ObservableObject {
     @Published public var recorderMessage: String?
     @Published public var loginItemEnabled: Bool
     @Published public var loginItemError: String?
+    @Published public var provisioningMessage: String?
 
     public let store: SettingsStore
     public let permissions: PermissionCenter
@@ -41,17 +42,39 @@ public final class AppModel: ObservableObject {
         permissionRows = permissions.snapshot()
     }
 
+    public var isRecording: Bool { recordingID != nil }
+
     public func act(on row: PermissionRow) {
         switch row.permission {
         case .accessibility:   permissions.requestAccessibility()
         case .screenRecording: permissions.requestScreenRecording()
-        case .hostsWritable, .dnsFlush:
-            // M4 才接 Provisioning；现在至少把系统面板打开，别让用户点了没反应
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
-                NSWorkspace.shared.open(url)
-            }
+        case .hostsWritable:
+            provision(.hostsGroupWritable)
+        case .dnsFlush:
+            provision(.dnsSudoers)
         }
         refreshPermissions()
+    }
+
+    /// 一次性系统授权。跑在后台队列：AppleScript 会阻塞等用户输密码。
+    private func provision(_ step: Provisioning.Step) {
+        provisioningMessage = "等待管理员授权…"
+        Task.detached(priority: .userInitiated) {
+            let result = await Provisioning.run(step)
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                switch result {
+                case .success:
+                    self.provisioningMessage = "授权完成"
+                case .failure(.cancelled):
+                    self.provisioningMessage = "已取消授权"
+                case .failure(.validationFailed(let m)), .failure(.installFailed(let m)),
+                     .failure(.notEffective(let m)):
+                    self.provisioningMessage = m
+                }
+                self.refreshPermissions()
+            }
+        }
     }
 
     // MARK: 快捷键录制
