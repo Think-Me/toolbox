@@ -28,6 +28,15 @@ if CommandLine.arguments.contains("--smoke-hotkey") {
     app.run()
 }
 
+// 权限自检：打印四项探针的真实值，用于和 shell 侧独立探测对账。
+if CommandLine.arguments.contains("--perms") {
+    let rows = PermissionCenter(probes: .live).snapshot()
+    for r in rows {
+        FileHandle.standardError.write("\(r.permission.rawValue): \(r.state)\n".data(using: .utf8)!)
+    }
+    exit(0)
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
