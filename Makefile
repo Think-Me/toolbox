@@ -34,3 +34,6 @@ perms:
 
 clean:
 	rm -rf .build Build
+
+rebuild:
+	./Scripts/rebuild.sh $(CONFIG)
