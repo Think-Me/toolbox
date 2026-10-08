@@ -106,6 +106,33 @@ public actor ClipboardStore {
         """, [.int(limit)])
     }
 
+    /// 全库找同内容条目的 id。
+    ///
+    /// 为什么必须查全库而不只比栈顶：用户复制 A、B、A 时，第三次和栈顶 B 不同，
+    /// 只比栈顶就会插入一条重复行（实测端到端跑出来过）。
+    /// 按 kind 分别比：文本比原文、图片比 sha、文件比有序路径列表。
+    public func matchingID(kind: ClipboardKind, text: String?, sha: String?,
+                           paths: [String]?) async throws -> UUID? {
+        let rows: [(id: String, v: String?)]
+        switch kind {
+        case .text:
+            rows = try await db.query(
+                "select id, text from clipboard_items where kind = 'text' and text = ? limit 1",
+                [.text(text ?? "")]) { (try $0.string("id"), try $0.optionalString("text")) }
+        case .image:
+            rows = try await db.query(
+                "select id, media_sha from clipboard_items where kind = 'image' and media_sha = ? limit 1",
+                [.text(sha ?? "")]) { (try $0.string("id"), try $0.optionalString("media_sha")) }
+        case .fileURLs:
+            let joined = (paths ?? []).joined(separator: ClipboardItem.urlSeparator)
+            rows = try await db.query(
+                "select id, file_urls from clipboard_items where kind = 'fileURLs' and file_urls = ? limit 1",
+                [.text(joined)]) { (try $0.string("id"), try $0.optionalString("file_urls")) }
+        }
+        guard let first = rows.first, let uuid = UUID(uuidString: first.id) else { return nil }
+        return uuid
+    }
+
     /// 空查询 = 不过滤（等价于 recent）。
     public func search(_ query: String, limit: Int) async throws -> [ClipboardItem] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)

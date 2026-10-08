@@ -14,8 +14,7 @@ public struct SettingsRootView: View {
             GeneralTabView(model: model)
                 .tabItem { Label("通用", systemImage: "gearshape") }
             // 以下三页是明确标注的延后项，不是空白占位：写清哪一版实现。
-            ComingSoonView(title: "剪贴板", milestone: "M1",
-                           lines: ["历史容量", "忽略的应用", "禁止记录的 App 白名单"])
+            ClipboardTabView(model: model)
                 .tabItem { Label("剪贴板", systemImage: "doc.on.clipboard") }
             ComingSoonView(title: "Hosts", milestone: "M4",
                            lines: ["规则库编辑", "远程规则同步", "授权与还原"])

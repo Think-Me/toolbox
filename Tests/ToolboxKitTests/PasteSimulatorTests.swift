@@ -132,3 +132,25 @@ private func textItem(_ s: String) -> ClipboardItem {
     #expect(pb.string(forType: .string) == "preexisting")   // 不许把用户原有内容清掉
     #expect(driver.calls.isEmpty)
 }
+
+// MARK: 粘贴后回写窗口
+
+@MainActor @Test func pasteMarksSelfWriteWindow() async {
+    let tracker = SelfWriteTracker()
+    let driver = FakeDriver()
+    let pb = NSPasteboard(name: .init("toolbox.grace.\(UUID().uuidString)"))
+    let sim = PasteSimulator(driver: driver, pasteboard: pb,
+                             accessibilityTrusted: { false },
+                             secureInputEnabled: { false },
+                             imageLoader: { _ in nil }, tracker: tracker)
+    #expect(!tracker.isWithinGrace(now: Date()))
+    _ = await sim.paste(textItem("x"), into: nil)
+    #expect(tracker.isWithinGrace(now: Date()))
+    // 窗口过后必须恢复采集，否则用户紧接着的复制会被吞掉
+    #expect(!tracker.isWithinGrace(now: Date().addingTimeInterval(SelfWriteTracker.grace + 0.1)))
+}
+
+@MainActor @Test func graceWindowShorterThanRealisticCopyInterval() {
+    // 宽限期必须明显小于人手动复制的间隔，否则等于漏采
+    #expect(SelfWriteTracker.grace <= 1.0)
+}

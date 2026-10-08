@@ -32,16 +32,19 @@ public final class PasteSimulator {
     private let secureInputEnabled: () -> Bool
     /// 图片条目要读 MediaStore 里的实体。用闭包注入，避免 Core 层反向依赖模块实现。
     private let imageLoader: (String) -> Data?
+    private let tracker: SelfWriteTracker?
 
     public init(driver: any PasteDriving, pasteboard: NSPasteboard = .general,
                 accessibilityTrusted: @escaping () -> Bool = { AXIsProcessTrusted() },
                 secureInputEnabled: @escaping () -> Bool = { IsSecureEventInputEnabled() },
-                imageLoader: @escaping (String) -> Data? = { _ in nil }) {
+                imageLoader: @escaping (String) -> Data? = { _ in nil },
+                tracker: SelfWriteTracker? = nil) {
         self.driver = driver
         self.pasteboard = pasteboard
         self.accessibilityTrusted = accessibilityTrusted
         self.secureInputEnabled = secureInputEnabled
         self.imageLoader = imageLoader
+        self.tracker = tracker
     }
 
     /// 步骤顺序是契约的一部分，改动必须同步改测试：
@@ -93,6 +96,8 @@ public final class PasteSimulator {
         }
         // 自写标记：monitor 读到就跳过这条，否则我们自己的写入会被自己再采集一遍
         pasteboard.setString(markerID, forType: .ownWrite)
+        // 再叠一层时间窗：目标 App 回写 pasteboard 时标记会丢，光靠标记挡不住
+        tracker?.markWrite(at: Date())
         return true
     }
 }

@@ -34,6 +34,10 @@ public final class PanelPresenter {
 
     public init() {}
 
+    /// 当前浮层窗口。控制器要往里设 first responder（比如让搜索框拿到键盘）。
+    /// 只读：外部不该换窗口。
+    public var windowForFocus: NSWindow? { panel }
+
     public func show<V: NSView>(content: V, anchor: PanelAnchor,
                                 width: CGFloat, height: CGFloat,
                                 onDismiss: @escaping @MainActor (DismissReason) -> Void) {

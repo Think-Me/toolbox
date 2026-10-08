@@ -99,6 +99,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 设置的唯一来源。AppDelegate 里再存一份 settings 会在"录制改键 → 菜单/热键读哪份"上分叉。
     let model: AppModel
 
+    // MARK: 剪贴板模块
+    lazy var database = Database(url: paths.database.appendingPathExtension("db"))
+    lazy var media = MediaStore(directory: paths.mediaDirectory)
+    lazy var clipboardStore = ClipboardStore(db: database, media: media)
+    /// 粘贴与采集共享同一个追踪器：目标 App 回写 pasteboard 会丢掉自写标记，
+    /// 只能靠这个时间窗避免把自己粘出去的内容再采一遍（实测曾让计数 +3）。
+    lazy var selfWrites = SelfWriteTracker()
+    lazy var pasteSimulator = PasteSimulator(
+        driver: SystemPasteDriver(),
+        imageLoader: { [media] sha in try? media.data(sha: sha) },
+        tracker: selfWrites)
+    lazy var clipboardPanel = ClipboardPanelController(
+        store: clipboardStore, media: media, simulator: pasteSimulator,
+        settings: { [weak self] in self?.model.settings ?? .default })
+    lazy var monitor = ClipboardMonitor(
+        store: clipboardStore, media: media, inputs: .live(),
+        settings: { [weak self] in self?.model.settings ?? .default },
+        selfWrites: selfWrites)
+
     override init() {
         store = SettingsStore(file: AppPaths.standard().settings)
         model = AppModel(
@@ -132,6 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let failed = registerHotkeys()
         if !failed.isEmpty && !Self.isProbeMode { reportFailures(failed) }
+        startClipboard()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self, let bar = self.menuBar else { return }
@@ -256,17 +276,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if alert.runModal() == .alertFirstButtonReturn { actions?.openSettings() }
     }
 
+    /// 开库 → 清孤儿文件 → 起轮询。全在后台，别挡首帧。
+    func startClipboard() {
+        Task { @MainActor in
+            do {
+                try await database.open(create: .clipboardV1)
+                _ = try media.garbageCollect(liveSHAs: Set(await clipboardStore.allMediaSHAs()))
+                if recording { monitor.start() }
+                model.clipboardStore = clipboardStore
+                model.mediaStore = media
+            } catch {
+                log("剪贴板初始化失败: \(error)\n")
+            }
+        }
+    }
+
     func makeActions() -> AppActions {
         model.onHotkeysChanged = { [weak self] _ in self?.reregisterHotkeys() }
         return AppActions(
-            clipboard: {}, hostsQuick: {},
+            clipboard: { [weak self] in self?.clipboardPanel.show() },
+            hostsQuick: {},
             captureRegion: { [weak self] in self?.showPlaceholder() },
             captureFull: {}, killAllPins: {},
-            togglePause: { [weak self] in self?.recording.toggle() },
+            togglePause: { [weak self] in self?.toggleRecording() },
             openPermissions: { [weak self] in self?.showSettings() },
             openSettings: { [weak self] in self?.showSettings() },
             toggleLoginItem: { [weak self] in self?.model.toggleLoginItem() },
             quit: { NSApp.terminate(nil) })
+    }
+
+    /// 暂停/恢复采集。菜单勾选态与 monitor 状态必须同源，否则会出现
+    /// "菜单显示记录中、其实已经停了"。
+    func toggleRecording() {
+        recording.toggle()
+        if recording { monitor.start() } else { monitor.stop(reason: .userPaused) }
     }
 
     func showSettings() {

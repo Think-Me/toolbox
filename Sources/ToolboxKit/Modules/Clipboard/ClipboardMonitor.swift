@@ -51,6 +51,7 @@ public final class ClipboardMonitor {
     private let media: MediaStore
     private let inputs: MonitorInputs
     private let settingsProvider: () -> AppSettings
+    private let selfWrites: SelfWriteTracker?
     private var lastChangeCount = -1
     private var timer: Timer?
     private var paused = false
@@ -60,9 +61,10 @@ public final class ClipboardMonitor {
     public var isRunning: Bool { timer != nil }
 
     public init(store: ClipboardStore, media: MediaStore, inputs: MonitorInputs,
-                settings: @escaping () -> AppSettings) {
+                settings: @escaping () -> AppSettings, selfWrites: SelfWriteTracker? = nil) {
         self.store = store; self.media = media; self.inputs = inputs
         self.settingsProvider = settings
+        self.selfWrites = selfWrites
     }
 
     public func start() {
@@ -98,6 +100,10 @@ public final class ClipboardMonitor {
         let cc = inputs.changeCount()
         guard cc != lastChangeCount else { return .noChange }
         lastChangeCount = cc
+        // 刚粘贴完：目标 App 往往会回写 pasteboard 换类型，那不算用户的新复制
+        if selfWrites?.isWithinGrace(now: inputs.now()) == true {
+            return .ignored(.ourOwnWrite)
+        }
 
         let snapshot = inputs.snapshot()
         let candidate = PasteboardNormalizer.normalize(snapshot)
@@ -121,6 +127,16 @@ public final class ClipboardMonitor {
             return .ignored(reason)
         case .accept(let content):
             do {
+                // 栈顶之外的重复（A、B、A）在这里兜住：找到同内容就 bump 到顶，
+                // 不再插一条新行。
+                let existing = try await store.matchingID(
+                    kind: content.kind, text: content.text,
+                    sha: content.pngData.map { SHA256.hex($0) },
+                    paths: content.fileURLs.isEmpty ? nil : content.fileURLs.map(\.path))
+                if let existing {
+                    try await store.bump(id: existing, at: inputs.now())
+                    return .bumped(existing)
+                }
                 let item = try await makeItem(from: content)
                 try await store.insert(item)
                 let trimmed = try await store.trim(to: settingsProvider().clipboardCapacity)

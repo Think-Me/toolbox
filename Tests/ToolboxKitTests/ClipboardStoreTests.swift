@@ -183,3 +183,38 @@ private func textItem(_ s: String, at t: TimeInterval) -> ClipboardItem {
     #expect(back?.fileURLs?.first?.path == "/tmp/x\ny.txt")
     #expect(back?.kind == .fileURLs)
 }
+
+@MainActor @Test func matchingIDFindsDuplicateAnywhereNotJustTop() async throws {
+    let (store, _, media, url) = try await makeStore()
+    defer { cleanup(url, media.directory) }
+    let a = textItem("A", at: 100), b = textItem("B", at: 200)
+    try await store.insert(a)
+    try await store.insert(b)
+    // A 不在栈顶，仍然必须被找到（否则 A、B、A 会插出两条 A）
+    #expect(try await store.matchingID(kind: .text, text: "A", sha: nil, paths: nil) == a.id)
+    #expect(try await store.matchingID(kind: .text, text: "B", sha: nil, paths: nil) == b.id)
+    #expect(try await store.matchingID(kind: .text, text: "C", sha: nil, paths: nil) == nil)
+}
+
+@MainActor @Test func matchingIDDoesNotCrossKinds() async throws {
+    let (store, _, media, url) = try await makeStore()
+    defer { cleanup(url, media.directory) }
+    try await store.insert(ClipboardItem(text: "same", sourceBundleID: nil, sourceAppName: nil,
+                                         at: Date(timeIntervalSince1970: 1)))
+    // 同名的图片/文件不该被文本匹配捞出来
+    #expect(try await store.matchingID(kind: .image, text: nil, sha: "same", paths: nil) == nil)
+    #expect(try await store.matchingID(kind: .fileURLs, text: nil, sha: nil,
+                                       paths: ["same"]) == nil)
+}
+
+@MainActor @Test func matchingIDForImagesUsesSHA() async throws {
+    let (store, _, media, url) = try await makeStore()
+    defer { cleanup(url, media.directory) }
+    let png = Data([9, 9, 9])
+    let sha = SHA256.hex(png)
+    try await store.insert(ClipboardItem(imagePNG: png, sha256: sha, pixelSize: nil,
+                                         sourceBundleID: nil, sourceAppName: nil,
+                                         at: Date(timeIntervalSince1970: 1)))
+    #expect(try await store.matchingID(kind: .image, text: nil, sha: sha, paths: nil) != nil)
+    #expect(try await store.matchingID(kind: .image, text: nil, sha: "other", paths: nil) == nil)
+}

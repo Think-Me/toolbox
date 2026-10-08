@@ -12,6 +12,8 @@ private final class FakeSource {
                                       imageData: nil, pixelSize: nil)
     var frontAppBundleID: String? = "com.test.app"
     var snapshotReads = 0
+    /// 默认冻结的时钟会让"谁更新"变得无法判定，所以测试里可以手动推进。
+    var now = Date(timeIntervalSince1970: 1_000)
 
     func inputs(now: @escaping () -> Date = { Date(timeIntervalSince1970: 1_000) }) -> MonitorInputs {
         MonitorInputs(
@@ -22,7 +24,7 @@ private final class FakeSource {
                 return self.snapshot
             },
             frontAppBundleID: { [weak self] in self?.frontAppBundleID },
-            now: now)
+            now: { [weak self] in self?.now ?? Date(timeIntervalSince1970: 1_000) })
     }
 }
 
@@ -192,4 +194,60 @@ private func makeMonitor(_ fake: FakeSource, capacity: Int = 500) async throws
 private func cleanup(_ url: URL, _ dir: URL) {
     try? FileManager.default.removeItem(at: url)
     try? FileManager.default.removeItem(at: dir)
+}
+
+@MainActor @Test func abcPatternProducesTwoRowsNotThree() async throws {
+    // 复制 A、B、A：第三次不等于栈顶 B，必须靠全库查重合并，
+    // 否则历史里会出现两条 A（端到端实测踩过）
+    let fake = FakeSource()
+    let (m, store, media, url) = try await makeMonitor(fake)
+    defer { cleanup(url, media.directory) }
+    for (i, text) in ["A", "B", "A"].enumerated() {
+        fake.changeCount = i + 1
+        fake.now = Date(timeIntervalSince1970: 1_000 + Double(i) * 60)
+        fake.snapshot = PasteboardSnapshot(types: [.string], text: text, fileURLs: [],
+                                           imageData: nil, pixelSize: nil)
+        _ = await m.pollOnce()
+    }
+    #expect(await m.storedCount() == 2)
+    let rows = try await store.recent(limit: 5)
+    #expect(rows.map(\.text) == ["A", "B"])           // 第三次复制把 A 顶回最上面
+    #expect(rows.first?.copyCount == 2)
+    #expect(rows.last?.copyCount == 1)
+}
+
+@MainActor @Test func pasteGraceWindowSuppressesReCapture() async throws {
+    let tracker = SelfWriteTracker()
+    let fake = FakeSource()
+    let url = URL(fileURLWithPath: "/tmp/toolbox-grace-\(UUID().uuidString).sqlite")
+    let dir = URL(fileURLWithPath: "/tmp/toolbox-grace-media-\(UUID().uuidString)", isDirectory: true)
+    defer { cleanup(url, dir) }
+    let db = Database(url: url)
+    try await db.open(create: .clipboardV1)
+    let media = MediaStore(directory: dir)
+    let store = ClipboardStore(db: db, media: media)
+    let m = ClipboardMonitor(store: store, media: media, inputs: fake.inputs(),
+                             settings: { AppSettings.default }, selfWrites: tracker)
+    fake.snapshot = PasteboardSnapshot(types: [.string], text: "first", fileURLs: [],
+                                       imageData: nil, pixelSize: nil)
+    fake.changeCount = 1
+    _ = await m.pollOnce()
+    #expect(await m.storedCount() == 1)
+
+    // 模拟"我们自己粘贴后，目标 App 回写了 pasteboard"：changeCount 变了、标记也没了
+    tracker.markWrite(at: fake.now)
+    fake.changeCount = 2
+    fake.snapshot = PasteboardSnapshot(types: [.string], text: "first", fileURLs: [],
+                                       imageData: nil, pixelSize: nil)
+    fake.now = fake.now.addingTimeInterval(0.2)
+    #expect(await m.pollOnce() == .ignored(.ourOwnWrite))
+    #expect(await m.storedCount() == 1)
+
+    // 过了宽限期，用户真的又复制了一次 → 必须采到
+    fake.changeCount = 3
+    fake.snapshot = PasteboardSnapshot(types: [.string], text: "second", fileURLs: [],
+                                       imageData: nil, pixelSize: nil)
+    fake.now = fake.now.addingTimeInterval(SelfWriteTracker.grace + 0.2)
+    if case .stored = await m.pollOnce() { } else { Issue.record("宽限期后应恢复采集") }
+    #expect(await m.storedCount() == 2)
 }
