@@ -5,8 +5,7 @@ import ToolboxKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        FileHandle.standardError.write("Toolbox up: \(ToolboxKit.moduleName)\n"
-            .data(using: .utf8)!)
+        FileHandle.standardError.write("Toolbox up (M0 骨架)\n".data(using: .utf8)!)
     }
 }
 
