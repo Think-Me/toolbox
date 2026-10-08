@@ -124,12 +124,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             log("状态栏图标安装失败\n")
         }
+        let failed = registerHotkeys()
+        if !failed.isEmpty && !Self.isProbeMode { reportFailures(failed) }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self, let bar = self.menuBar else { return }
             if CommandLine.arguments.contains("--menu-preview") {
                 bar.popUpPreviewMenu(at: NSPoint(x: 200, y: NSScreen.main!.frame.maxY - 120))
                 DispatchQueue.main.asyncAfter(deadline: .now() + 6) { NSApp.terminate(nil) }
+                return
+            }
+            if CommandLine.arguments.contains("--hotkey-probe") {
+                let failed = self.registerHotkeys()
+                let bound = HotkeyID.allCases.map { id -> String in
+                    id.rawValue + "=" + (HotkeyCenter.shared.boundCombo(for: id)?.displayString ?? "-")
+                }.joined(separator: " ")
+                log("HOTKEY_PROBE failed=[\(failed.map(\.rawValue).joined(separator: ","))] \(bound)\n")
+                NSApp.terminate(nil)
                 return
             }
             if CommandLine.arguments.contains("--menu-dump") {
@@ -144,7 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             // 图标被系统隐藏时必须说出来，否则用户以为 App 没启动。
             // 刘海 + 第三方图标占满时 install() 仍返回 true，只有 occlusionState 能看出来。
-            if !bar.isStatusItemVisible {
+            if !bar.isStatusItemVisible, !CommandLine.arguments.contains("--no-gui") {
                 log(bar.probeReport())
                 let alert = NSAlert()
                 alert.messageText = "Toolbox 的菜单栏图标没能显示"
@@ -156,6 +167,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if alert.runModal() == .alertSecondButtonReturn { self.actions?.openSettings() }
             }
         }
+    }
+
+    /// 探针/演示模式下不弹模态框，否则会把自动化验证卡死在弹窗上。
+    static let probeFlags = ["--menu-dump", "--menubar-probe", "--hotkey-probe",
+                             "--menu-preview", "--panel-demo", "--panel-hold",
+                             "--perms", "--smoke-hotkey"]
+    static var isProbeMode: Bool { probeFlags.contains { CommandLine.arguments.contains($0) } }
+
+    /// 注册全部热键。返回失败的 id 列表（空 = 全成功）。
+    @discardableResult
+    func registerHotkeys() -> [HotkeyID] {
+        var failed: [HotkeyID] = []
+        for id in HotkeyID.allCases {
+            guard let combo = settings.hotkeys[id] else { failed.append(id); continue }
+            let ok = HotkeyCenter.shared.register(id, combo) { [weak self] in
+                self?.actions?.invoke(id)
+            }
+            if !ok { failed.append(id) }
+        }
+        return failed
+    }
+
+    /// 静默失败是最糟的失败：哪个键没注册上、被谁占了，必须说清楚。
+    func reportFailures(_ failed: [HotkeyID]) {
+        var lines: [String] = []
+        for id in failed {
+            guard let combo = settings.hotkeys[id] else {
+                lines.append("\(id.rawValue)：设置里没有键位")
+                continue
+            }
+            let st = HotkeyCenter.shared.probe(combo)
+            let reason = st == noErr
+                ? "内部冲突（同一键位被本 App 的另一个功能占用）"
+                : "已被其它 App 抢注（Snipaste / SwitchHosts 等，Carbon 先注册者赢）"
+            lines.append("\(combo.displayString)  \(id.rawValue) —— \(reason)")
+        }
+        let text = lines.joined(separator: "\n")
+        log("HOTKEY FAILED:\n\(text)\n")
+        guard !CommandLine.arguments.contains("--no-gui") else { return }
+        let alert = NSAlert()
+        alert.messageText = "有 \(failed.count) 个快捷键没能注册"
+        alert.informativeText = text + "\n\n请到 Toolbox 设置 → 快捷键 换一组键位；"
+            + "若提示\u{201c}已被其它 App 抢注\u{201d}，先退出占用它的那个 App。"
+        alert.addButton(withTitle: "打开设置")
+        alert.addButton(withTitle: "稍后")
+        if alert.runModal() == .alertFirstButtonReturn { actions?.openSettings() }
     }
 
     func makeActions() -> AppActions {
