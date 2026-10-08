@@ -50,7 +50,7 @@ final class PanelDemoDelegate: NSObject, NSApplicationDelegate {
     init(hold: Bool) { self.hold = hold }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        if !AppDelegate.earlyRegular { NSApp.setActivationPolicy(.accessory) }
         if hold {
             PanelPresenter.shared.show(content: PlaceholderPanelView(text: "panel-hold"),
                                        anchor: .cursor, width: 320, height: 120) { _ in }
@@ -92,19 +92,25 @@ func log(_ s: String) {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let paths = AppPaths.standard()
     let store: SettingsStore
-    var settings = AppSettings.default
     var recording = true
     var menuBar: MenuBarController?
     var actions: AppActions?
+    var settingsWindow: SettingsWindowController?
+    /// 设置的唯一来源。AppDelegate 里再存一份 settings 会在"录制改键 → 菜单/热键读哪份"上分叉。
+    let model: AppModel
 
     override init() {
         store = SettingsStore(file: AppPaths.standard().settings)
+        model = AppModel(
+            settings: (try? store.load()) ?? .default,
+            store: store,
+            permissions: PermissionCenter(probes: .live),
+            loginItem: LoginItemCoordinator(manager: SMLoginItemManager()))
         super.init()
-        settings = (try? store.load()) ?? .default
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        if !Self.earlyRegular { NSApp.setActivationPolicy(.accessory) }
         try? paths.ensureDirectories()
 
         // 动作表只构造一次：全局热键和菜单项共用同一份闭包。
@@ -114,9 +120,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let controller = MenuBarController(
             state: { [weak self] in
-                MenuBarController.State(settings: self?.settings ?? .default,
+                MenuBarController.State(settings: self?.model.settings ?? .default,
                                         recording: self?.recording ?? true,
-                                        loginItemEnabled: false)
+                                        loginItemEnabled: self?.model.loginItemEnabled ?? false)
             },
             actions: acts)
         if controller.install() {
@@ -141,6 +147,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }.joined(separator: " ")
                 log("HOTKEY_PROBE failed=[\(failed.map(\.rawValue).joined(separator: ","))] \(bound)\n")
                 NSApp.terminate(nil)
+                return
+            }
+            if CommandLine.arguments.contains("--settings-preview") {
+                self.showSettings()
+                if let w = self.settingsWindow?.window {
+                    log("SETTINGS \(self.settingsWindow!.probeLine)\n")
+                    log("RESPONDER 类型=\(String(describing: w.firstResponder))\n")
+                    let f = w.frame
+                    let main = NSScreen.main?.frame.height ?? 0
+                    log("SETTINGS_WIN frame=\(f) 顶部Y=\(main - f.maxY) title=\(w.title) "
+                        + "key=\(w.isKeyWindow) visible=\(w.isVisible) 子视图=\(String(describing: w.contentView?.subviews.count))\n")
+                }
                 return
             }
             if CommandLine.arguments.contains("--menu-dump") {
@@ -172,15 +190,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 探针/演示模式下不弹模态框，否则会把自动化验证卡死在弹窗上。
     static let probeFlags = ["--menu-dump", "--menubar-probe", "--hotkey-probe",
                              "--menu-preview", "--panel-demo", "--panel-hold",
-                             "--perms", "--smoke-hotkey"]
+                             "--perms", "--smoke-hotkey", "--settings-preview"]
+    /// 实验：策略在 finishLaunching 之后再改可能完不成激活握手，
+    /// 所以 --regular-mode 在 app.run() 之前就把策略定成 .regular。
+    static var earlyRegular: Bool { CommandLine.arguments.contains("--regular-mode") }
+
     static var isProbeMode: Bool { probeFlags.contains { CommandLine.arguments.contains($0) } }
+
+    /// 改键后重新注册：先全部注销再按新值注册，避免残留旧键位仍在吞事件。
+    func reregisterHotkeys() {
+        for id in HotkeyID.allCases { HotkeyCenter.shared.unregister(id) }
+        let failed = registerHotkeys()
+        if !failed.isEmpty { reportFailures(failed) }
+    }
 
     /// 注册全部热键。返回失败的 id 列表（空 = 全成功）。
     @discardableResult
     func registerHotkeys() -> [HotkeyID] {
         var failed: [HotkeyID] = []
         for id in HotkeyID.allCases {
-            guard let combo = settings.hotkeys[id] else { failed.append(id); continue }
+            guard let combo = model.settings.hotkeys[id] else { failed.append(id); continue }
             let ok = HotkeyCenter.shared.register(id, combo) { [weak self] in
                 self?.actions?.invoke(id)
             }
@@ -193,7 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func reportFailures(_ failed: [HotkeyID]) {
         var lines: [String] = []
         for id in failed {
-            guard let combo = settings.hotkeys[id] else {
+            guard let combo = model.settings.hotkeys[id] else {
                 lines.append("\(id.rawValue)：设置里没有键位")
                 continue
             }
@@ -216,13 +245,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func makeActions() -> AppActions {
-        AppActions(
+        model.onHotkeysChanged = { [weak self] _ in self?.reregisterHotkeys() }
+        return AppActions(
             clipboard: {}, hostsQuick: {},
             captureRegion: { [weak self] in self?.showPlaceholder() },
             captureFull: {}, killAllPins: {},
             togglePause: { [weak self] in self?.recording.toggle() },
-            openPermissions: {}, openSettings: { [weak self] in self?.showPlaceholder() },
-            toggleLoginItem: {}, quit: { NSApp.terminate(nil) })
+            openPermissions: { [weak self] in self?.showSettings() },
+            openSettings: { [weak self] in self?.showSettings() },
+            toggleLoginItem: { [weak self] in self?.model.toggleLoginItem() },
+            quit: { NSApp.terminate(nil) })
+    }
+
+    func showSettings() {
+        if settingsWindow == nil { settingsWindow = SettingsWindowController(model: model) }
+        settingsWindow?.show()
     }
 
     func showPlaceholder() {
@@ -232,6 +269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 let app = NSApplication.shared
+if AppDelegate.earlyRegular { app.setActivationPolicy(.regular) }
 // NSApplication.delegate 是**弱引用**：delegate 必须放在有生命周期的存储里，
 // 直接 `app.delegate = Foo()` 会在下一行就被 ARC 回收，表现为"回调从来不触发"。
 if CommandLine.arguments.contains("--panel-demo") || CommandLine.arguments.contains("--panel-hold") {

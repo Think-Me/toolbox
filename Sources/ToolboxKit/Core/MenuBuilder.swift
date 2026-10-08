@@ -93,7 +93,7 @@ public enum MenuBuilder {
 
     public static func items(settings: AppSettings, recording: Bool,
                              loginItemEnabled: Bool) -> [MenuItemSpec] {
-        var out: [MenuItemSpec] = [
+        let out: [MenuItemSpec] = [
             hotkeyItem("剪贴板历史", .clipboard, settings),
             MenuItemSpec(title: "Hosts 规则",
                          keyEquivalent: charAndMask(settings.hotkeys[.hostsQuick]).0,
