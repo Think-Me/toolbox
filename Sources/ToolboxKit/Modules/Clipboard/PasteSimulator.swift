@@ -47,12 +47,19 @@ public final class PasteSimulator {
         self.tracker = tracker
     }
 
+    /// `prepare`：在**发粘贴按键之前**、写完剪贴板之后调用。
+    /// 调用方必须在这里把自己的浮层关掉。原因（实测踩到）：
+    /// accessory App 的 nonactivating panel 一旦成为 key window，`NSApp.isActive` 就是 true，
+    /// 我们合成的 ⌘V 会被 WindowServer 投给**自己的面板**而不是目标 App，
+    /// 表现就是"内容复制了但要再手动按一次 ⌘V"。
+    ///
     /// 步骤顺序是契约的一部分，改动必须同步改测试：
     /// 1. 先校验内容（空内容不许清掉用户原有剪贴板）
     /// 2. 写剪贴板 + 自写标记（**必须在切前台之前**，反了会把旧内容粘出去）
     /// 3. 权限 / 目标 / Secure Input 三道闸门，任一不过就停在"只复制"
-    /// 4. 切前台 → 等到位 → 发 ⌘V
-    public func paste(_ item: ClipboardItem, into app: NSRunningApplication?) async -> PasteOutcome {
+    /// 4. prepare（关掉自己的面板）→ 切前台 → 等到位 → 发 ⌘V
+    public func paste(_ item: ClipboardItem, into app: NSRunningApplication?,
+                      prepare: (@MainActor () -> Void)? = nil) async -> PasteOutcome {
         let payload: PastePayload
         switch item.kind {
         case .text:
@@ -77,6 +84,7 @@ public final class PasteSimulator {
         // 终端 sudo、密码框、部分 DRM 会开 Secure Input，此时合成键被系统丢弃
         if secureInputEnabled() { return .copiedOnly(.secureInputActive) }
 
+        prepare?()
         guard await driver.activate(app) else { return .copiedOnly(.timedOut) }
         guard await driver.sendPasteKeystroke() else { return .failed(.keystrokePostFailed) }
         return .pasted

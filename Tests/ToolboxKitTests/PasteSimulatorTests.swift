@@ -8,11 +8,17 @@ private final class FakeDriver: PasteDriving {
     var calls: [String] = []
     var activateResult = true
     var keystrokeResult = true
+    /// activate 被调用时"面板是否还开着"。真 bug 就是面板没先关，
+    /// 导致合成的 ⌘V 被打到自己的 key window 上而不是目标 App。
+    var panelStillOpenAtActivate: Bool?
 
     func activate(_ app: NSRunningApplication?) async -> Bool {
         calls.append("activate")
+        panelStillOpenAtActivate = panelOpenProbe?()
         return activateResult
     }
+
+    var panelOpenProbe: (() -> Bool)?
     func sendPasteKeystroke() async -> Bool {
         calls.append("keystroke")
         return keystrokeResult
@@ -153,4 +159,26 @@ private func textItem(_ s: String) -> ClipboardItem {
 @MainActor @Test func graceWindowShorterThanRealisticCopyInterval() {
     // 宽限期必须明显小于人手动复制的间隔，否则等于漏采
     #expect(SelfWriteTracker.grace <= 1.0)
+}
+
+@MainActor @Test func panelIsDismissedBeforePasteKeystroke() async {
+    // 回归：面板还开着时它是 key window，合成的 ⌘V 会被投给自己的面板。
+    let driver = FakeDriver()
+    var panelOpen = true
+    driver.panelOpenProbe = { panelOpen }
+    let pb = NSPasteboard(name: .init("toolbox.order.\(UUID().uuidString)"))
+    let sim = PasteSimulator(driver: driver, pasteboard: pb,
+                             accessibilityTrusted: { true },
+                             secureInputEnabled: { false }, imageLoader: { _ in nil })
+    let outcome = await sim.paste(textItem("x"), into: .current) { panelOpen = false }
+    #expect(outcome == .pasted)
+    #expect(driver.panelStillOpenAtActivate == false)   // 切前台前面板必须已经关掉
+    #expect(driver.calls == ["activate", "keystroke"])
+}
+
+@MainActor @Test func prepareNotSuppliedStillWorksButIsUnsafe() async {
+    // prepare 是可选参数：不传时行为不变（有测试挡住，免得以后误改成必选）
+    let (sim, driver, _) = makeSimulator()
+    #expect(await sim.paste(textItem("x"), into: .current) == .pasted)
+    #expect(driver.calls == ["activate", "keystroke"])
 }

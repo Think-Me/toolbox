@@ -1,11 +1,13 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// 面板根视图。承担两件事：
-/// 1. `performKeyEquivalent` 抢在字段编辑器之前吃掉 ⌘1…⌘9 / ⌘P / ⌘⌫
-///    （NSWindow 会先在 contentView 层级上问一遍，所以搜索框正在输入时也能收到）
-/// 2. 上下键/回车/Esc 不在这里处理 —— 那些走 responder chain 的 action 方法，
-///    见 ClipboardPanelController 的 moveUp(_:) / insertNewline(_:) 等
+/// 面板根视图。承担 ⌘1…⌘9 / ⌘P / ⌘ 的快捷键捕获。
+///
+/// 分工是刻意的：
+/// - 带 ⌘ 的组合键 → `performKeyEquivalent`（NSWindow 在把键交给字段编辑器之前
+///   会先问一遍 contentView 层级，所以搜索框正在输入时也能收到）
+/// - ↑↓ / Esc → responder chain 的 action 方法，见 ClipboardPanelController
+/// - 回车**故意不粘贴**（用户要求：粘贴只靠点击行或 ⌘数字）
 @MainActor
 public final class ClipboardRootView: NSView {
     public var onQuickPick: ((UInt16) -> Bool)?
@@ -17,9 +19,9 @@ public final class ClipboardRootView: NSView {
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard event.type == .keyDown else { return false }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard flags.contains(.command) else { return false }
+        guard flags.contains(.command), !flags.contains(.option), !flags.contains(.control)
+        else { return false }
 
-        if flags.contains(.option) || flags.contains(.control) { return false }
         switch event.keyCode {
         case UInt16(kVK_ANSI_P):
             return onPinToggled?() ?? false
@@ -31,88 +33,122 @@ public final class ClipboardRootView: NSView {
     }
 }
 
-/// 搜索框。文本变化走 NSTextFieldDelegate（`controlTextDidChange` 不是 NSControl
-/// 上可覆写的方法，之前写成 override 编译不过），键盘导航交给 responder chain。
-@MainActor
-public final class ClipboardSearchField: NSSearchField {}
+/// 尺寸与配色常量。集中一处，改视觉不用翻文件。
+enum ClipboardStyle {
+    static let panelWidth: CGFloat = 360
+    static let headerHeight: CGFloat = 34
+    static let rowHeightText: CGFloat = 30
+    static let rowHeightImage: CGFloat = 72
+    static let thumbnail: CGFloat = 56
+    static let inset: CGFloat = 12
+    static let title = "历史纪录"
 
-/// 列表行高与列布局。
-enum ClipboardRowLayout {
-    static let height: CGFloat = 52
-    static let thumbnail: CGFloat = 36
-    static let horizontalInset: CGFloat = 10
+    /// 快贴那种浅灰磨砂底 + 近黑正文 + 中灰次要文字。
+    /// 用系统语义色而不是写死 RGB，这样浅色/深色/增强对比度都能跟着走。
+    static var primaryText: NSColor { .labelColor }
+    static var secondaryText: NSColor { .secondaryLabelColor }
+    static var chevron: NSColor { .tertiaryLabelColor }
+    static var selection: NSColor { NSColor.selectedContentBackgroundColor.withAlphaComponent(0.16) }
 }
 
 @MainActor
 public final class ClipboardListView: NSObject, NSTableViewDataSource, NSTableViewDelegate,
                                     NSTextFieldDelegate, NSSearchFieldDelegate {
     public private(set) var tableView: NSTableView!
-    public private(set) var searchField: ClipboardSearchField!
+    public private(set) var searchField: NSSearchField!
     public private(set) var root: ClipboardRootView!
 
     public var items: [ClipboardItem] = [] {
         didSet { tableView?.reloadData() }
     }
     public var onQueryChanged: ((String) -> Void)?
+    /// 单击一行 = 粘贴该条。
+    public var onRowClicked: ((Int) -> Void)?
     public let thumbnails = ThumbnailCache()
-    /// 由控制器注入。cell 不该去够一个全局单例，那样测试和依赖方向都失控。
     public var media: MediaStore?
 
     public override init() {
         super.init()
-        let root = ClipboardRootView(frame: NSRect(x: 0, y: 0, width: 460, height: 360))
+        let root = ClipboardRootView(frame: NSRect(x: 0, y: 0,
+                                                   width: ClipboardStyle.panelWidth,
+                                                   height: 420))
         self.root = root
-        // 面板整体按深色外观渲染：否则 NSSearchField 会画成白底，
-        // 在深色面板上像贴了一张纸
-        root.appearance = NSAppearance(named: .darkAqua)
+        root.appearance = NSAppearance(named: .aqua)   // 磨砂浅底 + 深字，对齐快贴
         root.wantsLayer = true
-        root.layer?.backgroundColor = NSColor(calibratedWhite: 0.12, alpha: 0.98).cgColor
-        root.layer?.borderColor = NSColor(calibratedWhite: 0.45, alpha: 1).cgColor
-        root.layer?.borderWidth = 1
         root.layer?.cornerRadius = 10
+        root.layer?.masksToBounds = true
 
-        let search = ClipboardSearchField(frame: NSRect(x: 10, y: 328, width: 440, height: 24))
+        let effect = NSVisualEffectView()
+        effect.translatesAutoresizingMaskIntoConstraints = false
+        effect.material = .sidebar
+        effect.blendingMode = .behindWindow
+        effect.state = .active
+        root.addSubview(effect, positioned: .below, relativeTo: nil)
+
+        let title = NSTextField(labelWithString: ClipboardStyle.title)
+        title.font = .systemFont(ofSize: 11, weight: .medium)
+        title.textColor = .secondaryLabelColor
+        title.translatesAutoresizingMaskIntoConstraints = false
+
+        let search = NSSearchField()
         search.translatesAutoresizingMaskIntoConstraints = false
-        search.placeholderString = "搜索剪贴板历史"
+        search.placeholderString = "搜索"
         search.focusRingType = .none
-        search.font = .systemFont(ofSize: 13)
+        search.font = .systemFont(ofSize: 12)
         search.delegate = self
         self.searchField = search
 
         let table = NSTableView()
         table.headerView = nil
         table.backgroundColor = .clear
-        // 系统高亮在深色 borderless 面板上不可控（.regular 会画浅灰底，白字压上去看不清；
-        // AppKit 又没有 .emphasized），所以关掉系统高亮，自己画行背景。
-        table.selectionHighlightStyle = .none
-        table.rowHeight = ClipboardRowLayout.height
+        table.selectionHighlightStyle = .none          // 自画选中背景
+        table.rowHeight = ClipboardStyle.rowHeightText
         table.intercellSpacing = NSSize(width: 0, height: 0)
         table.style = .plain
+        table.allowsEmptySelection = true
+        table.allowsMultipleSelection = false
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("main"))
-        col.width = 440
+        col.width = ClipboardStyle.panelWidth
         table.addTableColumn(col)
         table.dataSource = self
         table.delegate = self
+        table.target = self
+        table.action = #selector(rowClicked(_:))
         self.tableView = table
 
         let scroll = NSScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
+        scroll.scrollerStyle = .overlay
         scroll.documentView = table
 
+        root.addSubview(title)
         root.addSubview(search)
         root.addSubview(scroll)
         NSLayoutConstraint.activate([
-            search.topAnchor.constraint(equalTo: root.topAnchor, constant: 8),
-            search.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
-            search.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
-            search.heightAnchor.constraint(equalToConstant: 24),
-            scroll.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 6),
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 4),
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -4),
-            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -6),
+            effect.topAnchor.constraint(equalTo: root.topAnchor),
+            effect.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            effect.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            effect.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            title.leadingAnchor.constraint(equalTo: root.leadingAnchor,
+                                           constant: ClipboardStyle.inset),
+            title.topAnchor.constraint(equalTo: root.topAnchor, constant: 10),
+            search.trailingAnchor.constraint(equalTo: root.trailingAnchor,
+                                             constant: -ClipboardStyle.inset),
+            search.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+            search.widthAnchor.constraint(equalToConstant: 132),
+            scroll.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
+            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
+    }
+
+    @objc private func rowClicked(_ sender: Any?) {
+        let row = tableView.clickedRow
+        guard row >= 0, row < items.count else { return }
+        onRowClicked?(row)
     }
 
     public func controlTextDidChange(_ obj: Notification) {
@@ -122,36 +158,139 @@ public final class ClipboardListView: NSObject, NSTableViewDataSource, NSTableVi
     public func numberOfRows(in tableView: NSTableView) -> Int { items.count }
 
     public func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        ClipboardRowLayout.height
-    }
-
-    public func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool { false }
-
-    public func tableView(_ tableView: NSTableView,
-                          viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard row < items.count else { return nil }
-        let item = items[row]
-        let cell = ClipboardCellView.dequeue(from: tableView)
-        cell.configure(with: item, media: media, thumbnails: thumbnails)
-        return cell
+        items.indices.contains(row) && items[row].kind == .image
+            ? ClipboardStyle.rowHeightImage : ClipboardStyle.rowHeightText
     }
 
     public func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
         ClipboardRowView()
     }
 
-    /// 选中态由我们自己画（面板不是标准窗口，系统高亮在 borderless 上不稳）
+    public func tableView(_ tableView: NSTableView,
+                          viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard row < items.count else { return nil }
+        let cell = ClipboardCellView.dequeue(from: tableView)
+        cell.configure(with: items[row], media: media, thumbnails: thumbnails)
+        return cell
+    }
+
     public func highlight(row: Int) {
         tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         tableView.scrollRowToVisible(row)
+    }
+
+    public var query: String { searchField?.stringValue ?? "" }
+    public func clearQuery() { searchField?.stringValue = "" }
+}
+
+/// 自画选中背景：系统高亮在磨砂浅底上对比度不够，且深色面板时代留下的白字方案会糊成一片。
+@MainActor
+final class ClipboardRowView: NSTableRowView {
+    override func drawBackground(in dirtyRect: NSRect) {
+        guard isSelected else { return }
+        ClipboardStyle.selection.setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 6, dy: 1),
+                     xRadius: 5, yRadius: 5).fill()
+    }
+}
+
+/// 一行：内容摘要（或缩略图/文件图标）+ 右侧 chevron。
+@MainActor
+public final class ClipboardCellView: NSTableCellView {
+    static let reuseID = NSUserInterfaceItemIdentifier("clipboard.cell")
+
+    private let icon = NSImageView()
+    private let title = NSTextField(labelWithString: "")
+    private let chevron = NSImageView()
+    private var boundSHA: String?
+
+    public override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        title.translatesAutoresizingMaskIntoConstraints = false
+        title.font = .systemFont(ofSize: 13)
+        title.textColor = ClipboardStyle.primaryText
+        title.lineBreakMode = .byTruncatingTail
+        title.maximumNumberOfLines = 1
+        title.backgroundColor = .clear
+
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
+        chevron.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+        chevron.contentTintColor = ClipboardStyle.chevron
+        chevron.imageScaling = .scaleNone
+
+        addSubview(icon)
+        addSubview(title)
+        addSubview(chevron)
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor,
+                                          constant: ClipboardStyle.inset),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 18),
+            icon.heightAnchor.constraint(equalToConstant: 18),
+            chevron.trailingAnchor.constraint(equalTo: trailingAnchor,
+                                              constant: -ClipboardStyle.inset),
+            chevron.centerYAnchor.constraint(equalTo: centerYAnchor),
+            chevron.widthAnchor.constraint(equalToConstant: 12),
+            title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
+            title.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("不支持从 nib 构造") }
+
+    func configure(with item: ClipboardItem, media: MediaStore?, thumbnails: ThumbnailCache) {
+        boundSHA = item.mediaSHA256
+        title.stringValue = item.rowTitle
+        toolTip = item.tooltipDetail
+        title.textColor = ClipboardStyle.primaryText
+
+        switch item.kind {
+        case .image:
+            icon.image = nil
+            iconWidth(ClipboardStyle.thumbnail)
+            if let sha = item.mediaSHA256, let media {
+                _ = thumbnails.image(forSHA: sha, from: media, maxPixel: 160) { [weak self] img in
+                    // 复用池里的 cell 可能已被派给别的行，回来时必须再核对
+                    guard let self, self.boundSHA == sha else { return }
+                    self.icon.image = img
+                }
+            }
+        case .fileURLs:
+            iconWidth(18)
+            icon.image = NSImage(systemSymbolName: "doc", accessibilityDescription: "文件")
+            icon.contentTintColor = ClipboardStyle.secondaryText
+        case .text:
+            iconWidth(18)
+            icon.image = nil
+        }
+    }
+
+    private var widthConstraint: NSLayoutConstraint?
+    private func iconWidth(_ w: CGFloat) {
+        widthConstraint?.isActive = false
+        let c = icon.widthAnchor.constraint(equalToConstant: w)
+        c.isActive = true
+        widthConstraint = c
+    }
+
+    static func dequeue(from table: NSTableView) -> ClipboardCellView {
+        if let reused = table.makeView(withIdentifier: reuseID, owner: nil) as? ClipboardCellView {
+            return reused
+        }
+        let cell = ClipboardCellView(frame: .zero)
+        cell.identifier = reuseID
+        return cell
     }
 }
 
 /// 缩略图缓存：读盘 + 降采样放后台，面板首帧不被它拖住。
 ///
 /// 回调一律留在 MainActor 侧的字典里，跨任务边界只传 sha（值类型）。
-/// 直接把 `@MainActor` 闭包带进 `Task.detached` 会被 Swift 6 的 sending 检查拦下，
-/// 那不是在为难你 —— 那个闭包确实会在并发上下文里被持有。
+/// 直接把 `@MainActor` 闭包带进 `Task.detached` 会被 Swift 6 的 sending 检查拦下。
 @MainActor
 public final class ThumbnailCache {
     private let cache = NSCache<NSString, NSImage>()
@@ -160,15 +299,12 @@ public final class ThumbnailCache {
 
     public init() { cache.countLimit = 300 }
 
-    /// 命中返回图片；未命中返回 nil 并在算好后回调（同一 sha 并发请求会合并）。
     public func image(forSHA sha: String, from media: MediaStore, maxPixel: CGFloat = 72,
                       onReady: @escaping @MainActor (NSImage) -> Void) -> NSImage? {
         if let hit = cache.object(forKey: sha as NSString) { return hit }
         waiters[sha, default: []].append(onReady)
         guard !inFlight.contains(sha) else { return nil }
         inFlight.insert(sha)
-        // 从 MainActor 侧起任务、await 后台算完的值，self 全程不跨并发边界
-        // （直接 `Task.detached { [weak self] ... }` 会被判成 sending self）
         Task { @MainActor in
             let loaded = await Task.detached(priority: .userInitiated) {
                 Self.loadDownsampled(sha: sha, media: media, maxPixel: maxPixel)
@@ -202,102 +338,33 @@ public final class ThumbnailCache {
     }
 }
 
-/// 单行：类型图标 / 缩略图 + 摘要 + 来源 + 相对时间 + 置顶标记。
-@MainActor
-public final class ClipboardCellView: NSTableCellView {
-    static let reuseID = NSUserInterfaceItemIdentifier("clipboard.cell")
-
-    private let icon = NSImageView()
-    private let title = NSTextField(labelWithString: "")
-    private let meta = NSTextField(labelWithString: "")
-    private var boundSHA: String?
-
-    public override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.imageScaling = .scaleProportionallyUpOrDown
-        title.translatesAutoresizingMaskIntoConstraints = false
-        title.font = .systemFont(ofSize: 12)
-        title.textColor = .white
-        title.lineBreakMode = .byTruncatingTail
-        title.maximumNumberOfLines = 2
-        meta.translatesAutoresizingMaskIntoConstraints = false
-        meta.font = .systemFont(ofSize: 10)
-        meta.textColor = NSColor(calibratedWhite: 0.65, alpha: 1)
-        meta.lineBreakMode = .byTruncatingTail
-        addSubview(icon)
-        addSubview(title)
-        addSubview(meta)
-        NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor,
-                                          constant: ClipboardRowLayout.horizontalInset),
-            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: ClipboardRowLayout.thumbnail),
-            icon.heightAnchor.constraint(equalToConstant: ClipboardRowLayout.thumbnail),
-            title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
-            title.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            title.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            meta.leadingAnchor.constraint(equalTo: title.leadingAnchor),
-            meta.trailingAnchor.constraint(equalTo: title.trailingAnchor),
-            meta.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 3),
-        ])
-    }
-
-    required init?(coder: NSCoder) { fatalError("不支持从 nib 构造") }
-
-    func configure(with item: ClipboardItem, media: MediaStore?,
-                   thumbnails: ThumbnailCache) {
-        title.stringValue = item.displayPreview
-        let source = item.sourceAppName ?? item.sourceBundleID ?? "未知来源"
-        let pin = item.pinned ? "置顶 · " : ""
-        meta.stringValue = "\(pin)\(source) · \(RelativeTime.short(item.lastCopiedAt)) · \(item.kindLabel)"
-        boundSHA = item.mediaSHA256
-
-        if item.kind == .image, let sha = item.mediaSHA256, let media {
-            icon.image = placeholderIcon(for: item)
-            _ = thumbnails.image(forSHA: sha, from: media) { [weak self] img in
-                // 复用池里的 cell 可能已经被派给别的行，回来时必须再核对一次
-                guard let self, self.boundSHA == sha else { return }
-                self.icon.image = img
-            }
-        } else {
-            icon.image = placeholderIcon(for: item)
-            icon.contentTintColor = NSColor(calibratedWhite: 0.7, alpha: 1)
-        }
-    }
-
-    private func placeholderIcon(for item: ClipboardItem) -> NSImage? {
-        NSImage(systemSymbolName: item.kindSymbol, accessibilityDescription: item.kindLabel)
-    }
-}
-
-extension ClipboardCellView {
-    /// 从复用池取 cell；取不到就新建并挂上标识，下一行起就能复用了。
-    static func dequeue(from table: NSTableView) -> ClipboardCellView {
-        if let reused = table.makeView(withIdentifier: reuseID, owner: nil) as? ClipboardCellView {
-            return reused
-        }
-        let cell = ClipboardCellView(frame: .zero)
-        cell.identifier = reuseID
-        return cell
-    }
-}
-
-
 extension ClipboardItem {
-    var kindLabel: String {
+    /// 行内显示的摘要。对齐快贴：文本就是文本本身，图片不显示文字，文件带前缀。
+    var rowTitle: String {
         switch kind {
-        case .text: return "文本"
-        case .image: return "图片"
-        case .fileURLs: return "文件"
+        case .text:
+            return folded((text ?? "").replacingOccurrences(of: "\t", with: " "))
+        case .image:
+            return ""
+        case .fileURLs:
+            let names = (fileURLs ?? []).map(\.lastPathComponent)
+            guard let first = names.first else { return "[文件]" }
+            return names.count > 1 ? "[文件] \(first) 等 \(names.count) 项" : "[文件] \(first)"
         }
     }
-    var kindSymbol: String {
-        switch kind {
-        case .text: return "text.alignleft"
-        case .image: return "photo"
-        case .fileURLs: return "doc.on.doc"
-        }
+
+    /// 悬停时给出完整信息（列表里放不下，但不能丢）
+    var tooltipDetail: String {
+        let source = sourceAppName ?? sourceBundleID ?? "未知来源"
+        let head = kind == .image ? "图片" : rowTitle
+        return "\(head)\n来源：\(source) · 复制于 \(RelativeTime.short(lastCopiedAt))"
+            + (copyCount > 1 ? " · 共 \(copyCount) 次" : "")
+    }
+
+    private func folded(_ s: String) -> String {
+        let oneLine = s.split(separator: "\n", omittingEmptySubsequences: false)
+                        .joined(separator: " ")
+        return oneLine
     }
 }
 
@@ -312,16 +379,5 @@ enum RelativeTime {
         case 86_400..<2_592_000: return "\(s / 86_400) 天前"
         default: return "更早"
         }
-    }
-}
-
-/// 自己画选中背景的行视图。
-@MainActor
-final class ClipboardRowView: NSTableRowView {
-    override func drawBackground(in dirtyRect: NSRect) {
-        guard isSelected else { return }
-        // 半透明蓝：深色/浅色背景下都能和白字保持对比度
-        NSColor(calibratedRed: 0.24, green: 0.42, blue: 0.86, alpha: 0.9).setFill()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 5, dy: 3), xRadius: 6, yRadius: 6).fill()
     }
 }

@@ -7,9 +7,9 @@ import Carbon.HIToolbox
 /// - ⌘1…⌘9 / ⌘P / ⌘⌫ → `ClipboardRootView.performKeyEquivalent`
 ///   （NSWindow 在把键交给字段编辑器之前会先问一遍 contentView 层级，
 ///    所以搜索框正在输入时也能收到）
-/// - ↑↓ / ⏎ / Esc / ⌫ → responder chain 的 action 方法（本类的 @objc 方法）
+/// - ↑↓ / Esc / ⌫ → responder chain 的 action 方法（本类的 @objc 方法）
 ///   单行文本框不处理 moveUp:/moveDown:，它们会自然冒泡到这里。
-///   比自己装事件监视器可靠，也不会和系统的键盘处理打架。
+/// - 粘贴入口只有两个：**单击行** 或 **⌘数字**。回车故意不粘贴（用户要求）。
 @MainActor
 public final class ClipboardPanelController: NSResponder {
     private let store: ClipboardStore
@@ -24,8 +24,8 @@ public final class ClipboardPanelController: NSResponder {
     private var query = ""
     private var degradeNote: String?
 
-    public static let panelWidth: CGFloat = 460
-    public static let panelHeight: CGFloat = 360
+    public static var panelWidth: CGFloat { ClipboardStyle.panelWidth }
+    public static let panelHeight: CGFloat = 420
 
     public init(store: ClipboardStore, media: MediaStore, simulator: PasteSimulator,
                 presenter: PanelPresenter = .shared,
@@ -52,6 +52,7 @@ public final class ClipboardPanelController: NSResponder {
             Task { @MainActor in await self.reload() }
         }
         view.root.onQuickPick = { [weak self] keyCode in self?.quickPick(keyCode) ?? false }
+        view.onRowClicked = { [weak self] row in self?.clickRow(row) }
         view.root.onPinToggled = { [weak self] in self?.togglePin() ?? false }
         view.root.onDeleteRequested = { [weak self] in self?.deleteCurrent() ?? false }
         listView = view
@@ -65,15 +66,10 @@ public final class ClipboardPanelController: NSResponder {
         // 把本对象插进 responder chain：视图链走完才轮到窗口，
         // 中间插一层就能拿到 moveUp:/insertNewline: 这些 action
         view.root.nextResponder = self
-        view.searchField.placeholderString = Self.placeholder(settingsProvider().hotkeys)
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.presenter.windowForFocus?.makeFirstResponder(view.searchField)
         }
-    }
-
-    static func placeholder(_ hotkeys: [HotkeyID: KeyCombo]) -> String {
-        "搜索 · ⏎ 粘贴 · \(hotkeys[.clipboard]?.displayString ?? "⇧⌘V") 呼出 · Esc 关闭"
     }
 
     private func reload() async {
@@ -106,8 +102,15 @@ public final class ClipboardPanelController: NSResponder {
         listView?.highlight(row: selection.index)
     }
 
-    @objc public override func insertNewline(_ sender: Any?) {
-        guard let item = selection.current(in: items) else { return }
+    /// 回车**故意不粘贴**（用户要求：粘贴只靠点击行或 ⌘数字）。
+    /// 显式吞掉而不是删掉这个方法：留着它，回车就不会冒泡到默认按钮触发意外动作。
+    @objc public override func insertNewline(_ sender: Any?) {}
+
+    private func clickRow(_ row: Int) {
+        guard items.indices.contains(row) else { return }
+        selection.select(row)
+        listView?.highlight(row: row)
+        let item = items[row]
         Task { @MainActor in await commit(item) }
     }
 
@@ -154,23 +157,33 @@ public final class ClipboardPanelController: NSResponder {
         return true
     }
 
-    /// 粘贴。降级（只复制成功）时**不关面板**并把原因显示出来，
-    /// 否则用户会以为什么都没发生。
+    /// 粘贴。面板一律在发键之前关掉（见 prepare）；降级/失败时用非模态提示条说明原因，
+    /// 不用 NSAlert —— 那时焦点刚还给目标 App，弹模态框会打断用户输入。
     private func commit(_ item: ClipboardItem) async {
         let target = presenter.frontAppBeforePresentation
-        let outcome = await simulator.paste(item, into: target)
+        // prepare 里关面板：**必须在发 ⌘V 之前**。面板还开着时它是 key window，
+        // 合成的 ⌘V 会被投给我们自己的面板而不是目标 App（实测：内容复制了但没粘上）。
+        let outcome = await simulator.paste(item, into: target) { [weak self] in
+            self?.presenter.dismissCurrent(reason: .chose)
+        }
         switch outcome {
         case .pasted:
             try? await store.bump(id: item.id, at: Date())
-            presenter.dismissCurrent(reason: .chose)
         case .copiedOnly(let degrade):
             try? await store.bump(id: item.id, at: Date())
             degradeNote = Self.explain(degrade)
-            listView?.searchField.placeholderString = degradeNote ?? ""
+            showNote(degradeNote)
         case .failed(let failure):
             degradeNote = Self.explain(failure)
-            listView?.searchField.placeholderString = degradeNote ?? ""
+            showNote(degradeNote)
         }
+    }
+
+    /// 降级/失败要让人看见。面板此时已经关了，所以用非模态的浮动提示，
+    /// 不抢焦点、几秒后自己消失。
+    private func showNote(_ text: String?) {
+        guard let text else { return }
+        DegradeNotice.shared.show(text)
     }
 
     static func explain(_ degrade: PasteOutcome.Degrade) -> String {
