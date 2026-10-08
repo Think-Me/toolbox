@@ -14,11 +14,16 @@ app:
 run: app
 	open Build/Toolbox.app
 
-# 任务 5 的端到端冒烟：先编译合成器，起监听，再合成 ⌃⌘A
+# 任务 5 的端到端冒烟：先编译合成器，起监听，再合成 ⌃⌘A。
+# 期望输出 register=true 后紧跟 FIRED。没 FIRED 的排查顺序：
+#   ① Snipaste/SwitchHosts 是否还开着 ② 发送方有没有辅助功能权限 ③ 才轮到怀疑实现
 smoke: build
-	swiftc -O -o /tmp/toolbox-smoke-post Scripts/smoke-post-hotkey.swift
-	.build/debug/Toolbox --smoke-hotkey 2>/tmp/toolbox-smoke.log & \
-		sleep 2 && /tmp/toolbox-smoke-post && sleep 1 && cat /tmp/toolbox-smoke.log
+	@BIN=$$(swift build -c $(CONFIG) --show-bin-path)/Toolbox; \
+	swiftc -O -o /tmp/toolbox-smoke-post Scripts/smoke-post-hotkey.swift; \
+	rm -f /tmp/toolbox-smoke.log; \
+	"$$BIN" --smoke-hotkey 2>/tmp/toolbox-smoke.log & \
+	LISTENER=$$!; sleep 2; /tmp/toolbox-smoke-post; sleep 1; \
+	cat /tmp/toolbox-smoke.log; kill $$LISTENER 2>/dev/null || true
 
 # 打印两项系统权限的真实状态（对照 spec §2.4 / §4.3）
 perms:
