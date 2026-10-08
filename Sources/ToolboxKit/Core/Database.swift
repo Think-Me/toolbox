@@ -33,6 +33,10 @@ public enum DBValue: Sendable, Equatable {
     case blob(Data)
 
     public init(_ v: Int) { self = .integer(Int64(v)) }
+
+    /// 枚举载荷是 Int64（对齐 sqlite INTEGER），调用点几乎都只有 Int，
+    /// 所以给个显式入口，免得每处手写 `.integer(Int64(x))`。
+    public static func int(_ v: Int) -> DBValue { .integer(Int64(v)) }
     public init(_ v: Int64) { self = .integer(v) }
     public init(_ v: Bool) { self = .integer(v ? 1 : 0) }
     public init(_ v: Double) { self = .real(v) }
