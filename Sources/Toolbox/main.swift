@@ -149,6 +149,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
                 return
             }
+            if CommandLine.arguments.contains("--grant-screen") {
+                // 一步做完两件事：触发系统授权弹窗 + 打开对应设置面板。
+                // 屏幕录制授权后必须重启 App 才生效，这点在输出里说清楚。
+                self.model.permissions.requestScreenRecording()
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                    NSWorkspace.shared.open(url)
+                }
+                log("已发起屏幕录制授权：请在弹出的对话框选\u{201c}打开系统设置\u{201d}，"
+                    + "或直接在刚打开的面板里把 Toolbox 的开关打开，然后完全退出 App 再重开。\n")
+                return
+            }
             if CommandLine.arguments.contains("--settings-preview") {
                 self.showSettings()
                 if let w = self.settingsWindow?.window {
@@ -190,7 +201,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 探针/演示模式下不弹模态框，否则会把自动化验证卡死在弹窗上。
     static let probeFlags = ["--menu-dump", "--menubar-probe", "--hotkey-probe",
                              "--menu-preview", "--panel-demo", "--panel-hold",
-                             "--perms", "--smoke-hotkey", "--settings-preview"]
+                             "--perms", "--smoke-hotkey", "--settings-preview",
+                             "--grant-screen"]
     /// 实验：策略在 finishLaunching 之后再改可能完不成激活握手，
     /// 所以 --regular-mode 在 app.run() 之前就把策略定成 .regular。
     static var earlyRegular: Bool { CommandLine.arguments.contains("--regular-mode") }
