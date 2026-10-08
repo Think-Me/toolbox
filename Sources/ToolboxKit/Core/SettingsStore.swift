@@ -1,0 +1,71 @@
+import Foundation
+
+public struct AppSettings: Codable, Equatable, Sendable {
+    public var clipboardCapacity: Int
+    public var hotkeys: [HotkeyID: KeyCombo]
+    public var pinMinZoom: Double
+    public var pinMaxZoom: Double
+    public var scrollZoomDirection: ZoomDirection
+
+    public enum ZoomDirection: String, Codable, Sendable {
+        case upMagnifies, downMagnifies
+    }
+
+    /// 默认键位对照 spec §2.1。注意显示串遵循 ⌃⌥⇧⌘ 规范，
+    /// 所以文档里口语写的 ⌘⇧V 在这里是 ⇧⌘V。
+    public static let `default` = AppSettings(
+        clipboardCapacity: 500,
+        hotkeys: [
+            .clipboard:     KeyCombo(keyCode: KeyCombo.ansiV, carbonModifiers: KeyCombo.cmd | KeyCombo.shift),
+            .hostsQuick:    KeyCombo(keyCode: KeyCombo.ansiH, carbonModifiers: KeyCombo.cmd | KeyCombo.shift),
+            .captureRegion: KeyCombo(keyCode: KeyCombo.ansiA, carbonModifiers: KeyCombo.control | KeyCombo.cmd),
+            .captureFull:   KeyCombo(keyCode: KeyCombo.f2, carbonModifiers: 0),
+            .killAllPins:   KeyCombo(keyCode: KeyCombo.f3, carbonModifiers: 0),
+        ],
+        pinMinZoom: 0.2, pinMaxZoom: 8, scrollZoomDirection: .upMagnifies)
+
+    public init(clipboardCapacity: Int, hotkeys: [HotkeyID: KeyCombo],
+                pinMinZoom: Double, pinMaxZoom: Double,
+                scrollZoomDirection: ZoomDirection) {
+        self.clipboardCapacity = clipboardCapacity
+        self.hotkeys = hotkeys
+        self.pinMinZoom = pinMinZoom
+        self.pinMaxZoom = pinMaxZoom
+        self.scrollZoomDirection = scrollZoomDirection
+    }
+}
+
+/// 整体读写 settings.json。
+///
+/// 关键设计：损坏的文件**不许抛错**给调用方。启动时读不进去就隔离副本 + 回落默认值，
+/// 否则一次写坏的文件会让 App 再也起不来，用户连"清理授权/恢复"的入口都看不到。
+public struct SettingsStore: Sendable {
+    public let file: URL
+
+    public init(file: URL) { self.file = file }
+
+    public func load() throws -> AppSettings {
+        guard FileManager.default.fileExists(atPath: file.path) else { return .default }
+        let data = try Data(contentsOf: file)
+        do {
+            // 不设 keyDecodingStrategy：字段本来就是 camelCase，
+            // 加了 convertFromSnakeCase 反而要求 JSON 写成 clipboard_capacity。
+            return try JSONDecoder().decode(AppSettings.self, from: data)
+        } catch {
+            let stamp = Int(Date().timeIntervalSince1970)
+            try? FileManager.default.copyItem(at: file,
+                                              to: file.appendingPathExtension("corrupt-\(stamp)"))
+            return .default
+        }
+    }
+
+    public func save(_ settings: AppSettings) throws {
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        // 自家 Application Support 目录，原子写安全。
+        // spec §4.3 禁止原子写只针对 /etc/hosts（那里 rename 需要目录可写），别混淆。
+        try enc.encode(settings).write(to: file, options: .atomic)
+    }
+}
