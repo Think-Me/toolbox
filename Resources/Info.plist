@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>Toolbox</string>
+    <key>CFBundleDisplayName</key><string>Toolbox</string>
+    <key>CFBundleIdentifier</key><string>com.ebertwiseman.toolbox</string>
+    <key>CFBundleExecutable</key><string>Toolbox</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>LSUIElement</key><true/>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSSupportsAutomaticTermination</key><false/>
+    <key>NSSupportsSuddenTermination</key><false/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Toolbox 需要以管理员权限写入 /etc/hosts 并刷新 DNS 缓存。</string>
+</dict>
+</plist>
