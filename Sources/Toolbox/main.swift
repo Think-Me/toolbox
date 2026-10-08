@@ -90,9 +90,87 @@ func log(_ s: String) {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    let paths = AppPaths.standard()
+    let store: SettingsStore
+    var settings = AppSettings.default
+    var recording = true
+    var menuBar: MenuBarController?
+    var actions: AppActions?
+
+    override init() {
+        store = SettingsStore(file: AppPaths.standard().settings)
+        super.init()
+        settings = (try? store.load()) ?? .default
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        FileHandle.standardError.write("Toolbox up (M0 骨架)\n".data(using: .utf8)!)
+        try? paths.ensureDirectories()
+
+        // 动作表只构造一次：全局热键和菜单项共用同一份闭包。
+        // 各建一份的话，"按热键"和"点菜单"迟早行为分叉。
+        let acts = makeActions()
+        actions = acts
+
+        let controller = MenuBarController(
+            state: { [weak self] in
+                MenuBarController.State(settings: self?.settings ?? .default,
+                                        recording: self?.recording ?? true,
+                                        loginItemEnabled: false)
+            },
+            actions: acts)
+        if controller.install() {
+            menuBar = controller
+        } else {
+            log("状态栏图标安装失败\n")
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, let bar = self.menuBar else { return }
+            if CommandLine.arguments.contains("--menu-preview") {
+                bar.popUpPreviewMenu(at: NSPoint(x: 200, y: NSScreen.main!.frame.maxY - 120))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 6) { NSApp.terminate(nil) }
+                return
+            }
+            if CommandLine.arguments.contains("--menu-dump") {
+                log(bar.dumpMenu())
+                NSApp.terminate(nil)
+                return
+            }
+            if CommandLine.arguments.contains("--menubar-probe") {
+                log(bar.probeReport())
+                NSApp.terminate(nil)
+                return
+            }
+            // 图标被系统隐藏时必须说出来，否则用户以为 App 没启动。
+            // 刘海 + 第三方图标占满时 install() 仍返回 true，只有 occlusionState 能看出来。
+            if !bar.isStatusItemVisible {
+                log(bar.probeReport())
+                let alert = NSAlert()
+                alert.messageText = "Toolbox 的菜单栏图标没能显示"
+                alert.informativeText = "这台 Mac 是刘海屏且菜单栏已被其它 App 占满，系统没有给 Toolbox 分配可见位置。\n"
+                    + "功能不受影响，仍可用快捷键：⇧V 剪贴板 · ⌃A 截图 · ⌘, 打开设置\n"
+                    + "想让图标出现，请到 系统设置 → 控制中心 收起不用的菜单栏项目。"
+                alert.addButton(withTitle: "知道了")
+                alert.addButton(withTitle: "打开设置")
+                if alert.runModal() == .alertSecondButtonReturn { self.actions?.openSettings() }
+            }
+        }
+    }
+
+    func makeActions() -> AppActions {
+        AppActions(
+            clipboard: {}, hostsQuick: {},
+            captureRegion: { [weak self] in self?.showPlaceholder() },
+            captureFull: {}, killAllPins: {},
+            togglePause: { [weak self] in self?.recording.toggle() },
+            openPermissions: {}, openSettings: { [weak self] in self?.showPlaceholder() },
+            toggleLoginItem: {}, quit: { NSApp.terminate(nil) })
+    }
+
+    func showPlaceholder() {
+        PanelPresenter.shared.show(content: PlaceholderPanelView(text: "M0 占位浮层"),
+                                   anchor: .cursor, width: 320, height: 120) { _ in }
     }
 }
 

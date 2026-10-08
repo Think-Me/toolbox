@@ -23,6 +23,7 @@ public struct KeyCombo: Codable, Hashable, Sendable {
     // 常用虚拟键码
     public static let ansiA: UInt16 = 0, ansiS: UInt16 = 1, ansiD: UInt16 = 2, ansiF: UInt16 = 3
     public static let ansiH: UInt16 = 4, ansiV: UInt16 = 9
+    public static let comma: UInt16 = 43
     public static let space: UInt16 = 49, deleteLeft: UInt16 = 51, returnKey: UInt16 = 36
     public static let f1: UInt16 = 122, f2: UInt16 = 120, f3: UInt16 = 99
     private static let up: UInt16 = 126, down: UInt16 = 125, left: UInt16 = 123, right: UInt16 = 124
@@ -68,7 +69,7 @@ public struct KeyCombo: Codable, Hashable, Sendable {
     /// M0 只覆盖默认键位与单测所需；任意键的完整表在 M1 快捷键设置页补（YAGNI）。
     private static let names: [UInt16: String] = [
         ansiA: "A", ansiS: "S", ansiD: "D", ansiF: "F", ansiH: "H", ansiV: "V",
-        space: "Space", deleteLeft: "⌫", returnKey: "⏎",
+        comma: ",", space: "Space", deleteLeft: "⌫", returnKey: "⏎",
         f1: "F1", f2: "F2", f3: "F3",
         up: "↑", down: "↓", left: "←", right: "→",
     ]

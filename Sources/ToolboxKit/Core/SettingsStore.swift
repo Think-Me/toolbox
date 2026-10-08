@@ -21,6 +21,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
             .captureRegion: KeyCombo(keyCode: KeyCombo.ansiA, carbonModifiers: KeyCombo.control | KeyCombo.cmd),
             .captureFull:   KeyCombo(keyCode: KeyCombo.f2, carbonModifiers: 0),
             .killAllPins:   KeyCombo(keyCode: KeyCombo.f3, carbonModifiers: 0),
+            .openSettings:  KeyCombo(keyCode: KeyCombo.comma, carbonModifiers: KeyCombo.control | KeyCombo.cmd),
         ],
         pinMinZoom: 0.2, pinMaxZoom: 8, scrollZoomDirection: .upMagnifies)
 

@@ -21,7 +21,7 @@ private func handleHotKey(_ next: EventHandlerCallRef?, _ event: EventRef?,
 }
 
 public enum HotkeyID: String, Codable, CaseIterable, Sendable {
-    case clipboard, hostsQuick, captureRegion, captureFull, killAllPins
+    case clipboard, hostsQuick, captureRegion, captureFull, killAllPins, openSettings
 }
 
 @MainActor
