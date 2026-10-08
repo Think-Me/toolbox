@@ -28,6 +28,11 @@ public struct PermissionProbes: Sendable {
         self.dnsFlush = dnsFlush
     }
 
+    /// 全 denied 的固定探针：给单测造 AppModel 用，避免测试去碰真实系统权限。
+    public static let constantDenied = PermissionProbes(
+        accessibility: { false }, screenRecording: { false },
+        hostsWritable: { false }, dnsFlush: { false })
+
     public static let hostsPath = "/etc/hosts"
     public static let sudoersPath = "/etc/sudoers.d/toolbox"
 

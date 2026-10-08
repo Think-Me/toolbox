@@ -61,16 +61,9 @@ public struct KeyCombo: Codable, Hashable, Sendable {
         return s + Self.keyName(for: keyCode)
     }
 
+    /// 查表来自 SDK 生成的 KeyCodeNames（116 个键码），未知键码必须给出可见兜底，
+    /// 否则 UI 上会出现"看不见的快捷键"。
     public static func keyName(for keyCode: UInt16) -> String {
-        if let named = names[keyCode] { return named }
-        return "?(\(keyCode))"      // 未知码不许返回空串，否则 UI 会出现看不见的快捷键
+        KeyCodeNames.table[keyCode] ?? "?(\(keyCode))"
     }
-
-    /// M0 只覆盖默认键位与单测所需；任意键的完整表在 M1 快捷键设置页补（YAGNI）。
-    private static let names: [UInt16: String] = [
-        ansiA: "A", ansiS: "S", ansiD: "D", ansiF: "F", ansiH: "H", ansiV: "V",
-        comma: ",", space: "Space", deleteLeft: "⌫", returnKey: "⏎",
-        f1: "F1", f2: "F2", f3: "F3",
-        up: "↑", down: "↓", left: "←", right: "→",
-    ]
 }

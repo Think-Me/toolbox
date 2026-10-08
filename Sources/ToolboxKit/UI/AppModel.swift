@@ -83,7 +83,11 @@ public final class AppModel: ObservableObject {
         stopRecording()
         recordingID = id
         recorderMessage = nil
-        recorder = HotkeyRecorderModel(initial: settings.hotkeys[id] ?? .defaultBinding(for: id))
+        var rec = HotkeyRecorderModel(initial: settings.hotkeys[id] ?? .defaultBinding(for: id))
+        // 必须调用模型自己的 beginRecording：它的 keyPressed 第一行是
+        // `guard isRecording else { return }`，漏了这步就是"进入录制态但按什么都没反应"。
+        rec.beginRecording()
+        recorder = rec
     }
 
     public func stopRecording() {

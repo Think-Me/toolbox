@@ -26,10 +26,6 @@ struct HotkeysTabView: View {
                         Button("录制") { model.beginRecording(id) }.controlSize(.small)
                     }
                 }
-                // 每个键位行挂一个捕获视图；只有正在录制的那一行会抢 first responder。
-                .background(KeyCatcher(active: model.recordingID == id) { event in
-                    model.handleRecordedKey(event)
-                })
             }
             if let msg = model.recorderMessage {
                 Text(msg).font(.system(size: 11)).foregroundStyle(.secondary)
