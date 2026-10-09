@@ -1,4 +1,5 @@
 import AppKit
+import STTextView
 import ToolboxKit
 
 /// 顶层 `let` 在 main.swift 里是**按语句顺序初始化**的，不是懒加载：
@@ -202,6 +203,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     id.rawValue + "=" + (HotkeyCenter.shared.boundCombo(for: id)?.displayString ?? "-")
                 }.joined(separator: " ")
                 log("HOTKEY_PROBE failed=[\(failed.map(\.rawValue).joined(separator: ","))] \(bound)\n")
+                NSApp.terminate(nil)
+                return
+            }
+            if CommandLine.arguments.contains("--paste-probe") {
+                // 走和 ⌘V 完全相同的路径：NSApp.sendAction 沿 key window 的
+                // responder chain 找 paste:。不需要真键盘，因此能在自动化里验证。
+                let tv = STTextView()
+                tv.isEditable = true
+                tv.text = "起始内容 "
+                let w = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 400, height: 200),
+                                 styleMask: [.titled], backing: .buffered, defer: false)
+                w.contentView = tv
+                w.makeKeyAndOrderFront(nil)
+                w.makeFirstResponder(tv)
+                NSApp.activate(ignoringOtherApps: true)
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString("10.0.0.7 pasted.local", forType: .string)
+                let viaChain = NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+                let afterChain = tv.text ?? "?"
+                // 对照：直接指定 target，绕开 key window / responder chain
+                tv.text = "起始内容 "
+                let viaTarget = NSApp.sendAction(#selector(NSText.paste(_:)), to: tv, from: nil)
+                let afterTarget = tv.text ?? "?"
+                log("PASTEPROBE 走响应链 sent=\(viaChain) 文本=\(afterChain)\n")
+                log("PASTEPROBE 指定target sent=\(viaTarget) 文本=\(afterTarget)\n")
+                log("PASTEPROBE keyWindow=\(NSApp.keyWindow.map { String(describing: type(of: $0)) } ?? "nil") "
+                    + "本窗isKey=\(w.isKeyWindow) firstResponder=\(String(describing: w.firstResponder))\n")
+                log("PASTEPROBE 结论=\(afterTarget.contains("pasted.local") ? "paste: 本身可用；响应链取決于窗口是否 key" : "paste: 根本不可用")\n")
                 NSApp.terminate(nil)
                 return
             }
@@ -421,7 +451,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                              "--menu-preview", "--panel-demo", "--panel-hold",
                              "--perms", "--smoke-hotkey", "--settings-preview",
                              "--grant-screen", "--capture-probe", "--pin-demo",
-                             "--hosts-e2e", "--menu-probe"]
+                             "--hosts-e2e", "--menu-probe", "--paste-probe"]
     /// 实验：策略在 finishLaunching 之后再改可能完不成激活握手，
     /// 所以 --regular-mode 在 app.run() 之前就把策略定成 .regular。
     static var earlyRegular: Bool { CommandLine.arguments.contains("--regular-mode") }
