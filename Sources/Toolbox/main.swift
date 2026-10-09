@@ -169,6 +169,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
                 return
             }
+            if CommandLine.arguments.contains("--pin-demo") {
+                let cs = CGColorSpaceCreateDeviceRGB()
+                let ctx = CGContext(data: nil, width: 300, height: 200, bitsPerComponent: 8,
+                                    bytesPerRow: 0, space: cs,
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                ctx.setFillColor(CGColor(colorSpace: cs, components: [0.85, 0.2, 0.25, 1])!)
+                ctx.fill(CGRect(x: 0, y: 0, width: 300, height: 200))
+                ctx.setFillColor(CGColor(colorSpace: cs, components: [1, 1, 1, 1])!)
+                ctx.fill(CGRect(x: 20, y: 20, width: 60, height: 60))
+                let cg = ctx.makeImage()!
+                let img = NSImage(cgImage: cg, size: NSSize(width: 300, height: 200))
+                PinManager.shared.settingsProvider = { [weak self] in self?.model.settings ?? .default }
+                PinManager.shared.magnifySignProvider = { [weak self] in
+                    (self?.model.settings.scrollZoomDirection ?? .upMagnifies) == .downMagnifies ? -1 : 1
+                }
+                let win = PinManager.shared.pin(img, at: CGRect(x: 500, y: 500, width: 300, height: 200))
+                log("PIN_DEMO id=\(win.id.uuidString.prefix(8)) frame=\(win.frame) "
+                    + "count=\(PinManager.shared.pinCount)\n")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    log("PIN_STATE isVisible=\(win.isVisible) onActiveSpace=\(win.isOnActiveSpace) "
+                        + "alpha=\(win.alphaValue) level=\(win.level.rawValue) "
+                        + "hasShadow=\(win.hasShadow) bg=\(win.backgroundColor as Any) "
+                        + "contentView=\(String(describing: win.contentView?.frame)) "
+                        + "appWindows=\(NSApp.windows.count) hidden=\(NSApp.isHidden)\n")
+                }
+                return
+            }
             if CommandLine.arguments.contains("--capture-probe") {
                 Task { @MainActor in
                     do {
@@ -241,7 +268,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let probeFlags = ["--menu-dump", "--menubar-probe", "--hotkey-probe",
                              "--menu-preview", "--panel-demo", "--panel-hold",
                              "--perms", "--smoke-hotkey", "--settings-preview",
-                             "--grant-screen", "--capture-probe"]
+                             "--grant-screen", "--capture-probe", "--pin-demo"]
     /// 实验：策略在 finishLaunching 之后再改可能完不成激活握手，
     /// 所以 --regular-mode 在 app.run() 之前就把策略定成 .regular。
     static var earlyRegular: Bool { CommandLine.arguments.contains("--regular-mode") }
