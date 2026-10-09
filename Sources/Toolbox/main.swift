@@ -169,6 +169,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
                 return
             }
+            if CommandLine.arguments.contains("--capture-probe") {
+                Task { @MainActor in
+                    do {
+                        let frame = try await CaptureService().captureUnderCursor()
+                        let rep = NSBitmapImageRep(cgImage: frame.image)
+                        let png = rep.representation(using: .png, properties: [:]) ?? Data()
+                        let out = URL(fileURLWithPath: "/tmp/toolbox-capture-probe.png")
+                        try png.write(to: out)
+                        log("CAPTURE_OK px=\(frame.image.width)x\(frame.image.height) "
+                            + "points=\(frame.screenFrameInPoints) scale=\(frame.scale) "
+                            + "bytes=\(png.count) -> \(out.path)\n")
+                        log("CAPTURE_STATS \(Self.pixelStats(frame.image))\n")
+                    } catch {
+                        log("CAPTURE_FAIL \(error)\n")
+                    }
+                    NSApp.terminate(nil)
+                }
+                return
+            }
             if CommandLine.arguments.contains("--grant-screen") {
                 // 一步做完两件事：触发系统授权弹窗 + 打开对应设置面板。
                 // 屏幕录制授权后必须重启 App 才生效，这点在输出里说清楚。
@@ -222,10 +241,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let probeFlags = ["--menu-dump", "--menubar-probe", "--hotkey-probe",
                              "--menu-preview", "--panel-demo", "--panel-hold",
                              "--perms", "--smoke-hotkey", "--settings-preview",
-                             "--grant-screen"]
+                             "--grant-screen", "--capture-probe"]
     /// 实验：策略在 finishLaunching 之后再改可能完不成激活握手，
     /// 所以 --regular-mode 在 app.run() 之前就把策略定成 .regular。
     static var earlyRegular: Bool { CommandLine.arguments.contains("--regular-mode") }
+
+    /// 统计一下抓到的画面：全黑/全白基本就是权限没到位的症状。
+    static func pixelStats(_ image: CGImage) -> String {
+        guard let data = image.dataProvider?.data as Data? else { return "no data" }
+        let bpp = image.bitsPerPixel / 8
+        var minV = 255, maxV = 0, sum = 0, n = 0
+        data.withUnsafeBytes { raw in
+            guard let p = raw.bindMemory(to: UInt8.self).baseAddress else { return }
+            let total = raw.count / bpp
+            let stride = max(1, total / 20_000)
+            var i = 0
+            while i < total {
+                let o = i * bpp
+                let v = (Int(p[o]) + Int(p[o + 1]) + Int(p[o + 2])) / 3
+                minV = min(minV, v); maxV = max(maxV, v); sum += v; n += 1
+                i += stride
+            }
+        }
+        return "min=\(minV) max=\(maxV) avg=\(n > 0 ? sum / n : 0) samples=\(n)"
+    }
 
     static var isProbeMode: Bool { probeFlags.contains { CommandLine.arguments.contains($0) } }
 
