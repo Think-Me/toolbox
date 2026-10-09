@@ -206,6 +206,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
                 return
             }
+            if CommandLine.arguments.contains("--overlay-preview") {
+                // 不依赖全局热键直接呼出截图遮罩：
+                // 自动化环境里 RustDesk 等会独占键盘，热键测不了时用这个
+                captureFlow.onMessage = { text in DegradeNotice.shared.show(text) }
+                captureFlow.startRegionCapture()
+                return
+            }
+            if CommandLine.arguments.contains("--clip-preview") {
+                clipboardPanel.show()
+                return
+            }
             if CommandLine.arguments.contains("--paste-probe") {
                 // 走和 ⌘V 完全相同的路径：NSApp.sendAction 沿 key window 的
                 // responder chain 找 paste:。不需要真键盘，因此能在自动化里验证。
@@ -451,7 +462,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                              "--menu-preview", "--panel-demo", "--panel-hold",
                              "--perms", "--smoke-hotkey", "--settings-preview",
                              "--grant-screen", "--capture-probe", "--pin-demo",
-                             "--hosts-e2e", "--menu-probe", "--paste-probe"]
+                             "--hosts-e2e", "--menu-probe", "--paste-probe",
+                             "--overlay-preview", "--clip-preview"]
     /// 实验：策略在 finishLaunching 之后再改可能完不成激活握手，
     /// 所以 --regular-mode 在 app.run() 之前就把策略定成 .regular。
     static var earlyRegular: Bool { CommandLine.arguments.contains("--regular-mode") }

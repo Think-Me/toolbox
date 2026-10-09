@@ -53,6 +53,7 @@ enum ClipboardStyle {
     static var secondaryText: NSColor { .secondaryLabelColor }
     static var chevron: NSColor { .tertiaryLabelColor }
     static var selection: NSColor { NSColor.selectedContentBackgroundColor.withAlphaComponent(0.16) }
+    static var hover: NSColor { NSColor.secondaryLabelColor.withAlphaComponent(0.10) }
 }
 
 @MainActor
@@ -102,7 +103,7 @@ public final class ClipboardListView: NSObject, NSTableViewDataSource, NSTableVi
         search.delegate = self
         self.searchField = search
 
-        let table = NSTableView()
+        let table = HoveringTableView()
         table.headerView = nil
         table.backgroundColor = .clear
         table.selectionHighlightStyle = .none          // 自画选中背景
@@ -170,6 +171,12 @@ public final class ClipboardListView: NSObject, NSTableViewDataSource, NSTableVi
         ClipboardRowView()
     }
 
+    /// 数据变了要清掉悬停行，否则旧行号会指向新内容，高亮错位。
+    public func tableView(_ tableView: NSTableView, didAdd rowView: NSTableRowView, forRow row: Int) {
+        (rowView as? ClipboardRowView)?.isHovered =
+            (tableView as? HoveringTableView)?.hoveredRow == row
+    }
+
     public func tableView(_ tableView: NSTableView,
                           viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < items.count else { return nil }
@@ -187,14 +194,74 @@ public final class ClipboardListView: NSObject, NSTableViewDataSource, NSTableVi
     public func clearQuery() { searchField?.stringValue = "" }
 }
 
-/// 自画选中背景：系统高亮在磨砂浅底上对比度不够，且深色面板时代留下的白字方案会糊成一片。
+/// 自画选中/悬停背景。系统高亮在磨砂浅底上对比度不够，且深色面板时代留下的
+/// 白字方案会糊成一片，所以两者都自己画。
 @MainActor
 final class ClipboardRowView: NSTableRowView {
+    var isHovered = false { didSet { if isHovered != oldValue { needsDisplay = true } } }
+
     override func drawBackground(in dirtyRect: NSRect) {
-        guard isSelected else { return }
-        ClipboardStyle.selection.setFill()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 6, dy: 1),
-                     xRadius: 5, yRadius: 5).fill()
+        if isSelected {
+            ClipboardStyle.selection.setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 6, dy: 1),
+                         xRadius: 5, yRadius: 5).fill()
+        } else if isHovered {
+            // 悬停比选中淡得多：鼠标划过是"预览"，键盘选中才是"当前项"
+            ClipboardStyle.hover.setFill()
+            NSBezierPath(roundedRect: bounds.insetBy(dx: 6, dy: 1),
+                         xRadius: 5, yRadius: 5).fill()
+        }
+    }
+}
+
+/// 跟踪鼠标悬停行的表格。
+///
+/// 用 NSTrackingArea 而不是 NSEvent.addLocalMonitorForEvents：
+/// 后者在 Swift 6 里 handler 是 @Sendable，而 NSEvent 不 conform Sendable，
+/// 编译就过不去（M1 踩过）。
+@MainActor
+final class HoveringTableView: NSTableView {
+    var hoveredRow: Int = -1 {
+        didSet {
+            guard hoveredRow != oldValue else { return }
+            applyHover(oldValue, false)
+            applyHover(hoveredRow, true)
+        }
+    }
+    private var tracking: NSTrackingArea?
+
+    private func applyHover(_ row: Int, _ on: Bool) {
+        guard row >= 0 else { return }
+        (rowView(atRow: row, makeIfNecessary: false) as? ClipboardRowView)?.isHovered = on
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self, userInfo: nil)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseMoved(with event: NSEvent) { refreshHover(event) }
+    override func mouseDragged(with event: NSEvent) { refreshHover(event) }
+
+    override func mouseExited(with event: NSEvent) { hoveredRow = -1 }
+
+    override func reloadData() {
+        // 只重置索引，**不要**在这里去碰 row view：
+        // reloadData 期间表还没重算布局，调 rowView(atRow:) 会让表格停止渲染行
+        // （实测：数据库有 3 条，面板却一片空白）。
+        // 新出现的行由 didAdd rowView 回调按当前 hoveredRow 赋值。
+        if hoveredRow != -1 { hoveredRow = -1 }
+        super.reloadData()
+    }
+
+    private func refreshHover(_ event: NSEvent) {
+        hoveredRow = row(at: convert(event.locationInWindow, from: nil))
     }
 }
 

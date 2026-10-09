@@ -211,64 +211,72 @@ public final class SelectionView: NSView {
     }
 }
 
-/// 选区下方的操作条：复制 / 钉图 / 存盘 / 重选 / 取消。
+/// 选区下方的操作条：纯图标按钮（用户要求，不用文字）。
+///
+/// 每个按钮都带 tooltip 说明动作与快捷键 —— 图标本身表意有限，
+/// 去掉文字就必须把可读性补回来。
 @MainActor
 public final class ActionStripView: NSView {
     public enum Kind: CaseIterable { case copy, pin, save, reshot, cancel }
     public var onAction: ((Kind) -> Void)?
 
+    private static let buttonWidth: CGFloat = 34
+    private static let buttonHeight: CGFloat = 28
+    private static let edgeInset: CGFloat = 5
+
+    private let symbols: [Kind: String] = [
+        .copy: "doc.on.clipboard", .pin: "pin.fill", .save: "square.and.arrow.down",
+        .reshot: "arrow.counterclockwise", .cancel: "xmark",
+    ]
     private let titles: [Kind: String] = [
         .copy: "复制", .pin: "钉图", .save: "存盘", .reshot: "重选", .cancel: "取消",
+    ]
+    private let hints: [Kind: String] = [
+        .copy: "复制到剪贴板 (⌘C)", .pin: "钉到屏幕 (⏎)", .save: "存为文件 (⌘S)",
+        .reshot: "重新框选", .cancel: "取消 (Esc)",
     ]
 
     public init() {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = NSColor(calibratedWhite: 0.15, alpha: 0.96).cgColor
-        layer?.cornerRadius = 6
-        layer?.borderColor = NSColor(calibratedWhite: 0.45, alpha: 1).cgColor
+        layer?.backgroundColor = NSColor(calibratedWhite: 0.16, alpha: 0.96).cgColor
+        layer?.cornerRadius = 7
+        layer?.borderColor = NSColor(calibratedWhite: 0.42, alpha: 1).cgColor
         layer?.borderWidth = 1
-        var x: CGFloat = 4
-        for kind in Kind.allCases {
-            // target 必须是 self：NSButton(target: nil) 会把 action 沿 responder chain
-            // 往上找，而本视图是 SelectionView 的**兄弟**、不在链上，结果就是
-            // "按钮看得见、点了没反应"（用户实测报的现象）。
-            let b = NSButton(title: titles[kind] ?? "", target: self,
-                             action: #selector(tapped(_:)))
-            b.bezelStyle = .inline
+        for (i, kind) in Kind.allCases.enumerated() {
+            let b = NSButton(frame: .zero)
             b.isBordered = false
-            b.contentTintColor = .white
-            b.font = .systemFont(ofSize: 11, weight: .medium)
-            b.sizeToFit()
-            var f = b.frame
-            f.origin = CGPoint(x: x, y: (Self.defaultHeight - f.height) / 2)
-            f.size.width = max(40, f.width + 8)
-            b.frame = f
-            b.tag = Kind.allCases.firstIndex(of: kind)!
-            b.toolTip = tooltip(for: kind)
+            b.bezelStyle = .regularSquare
+            b.imagePosition = .imageOnly
+            b.title = ""
+            b.target = self
+            b.action = #selector(tapped(_:))
+            b.tag = i
+            b.toolTip = hints[kind]
+            b.setButtonType(.momentaryChange)
+            let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+            b.image = NSImage(systemSymbolName: symbols[kind] ?? "questionmark",
+                              accessibilityDescription: titles[kind])?
+                .withSymbolConfiguration(cfg)
+            b.contentTintColor = kind == .cancel
+                ? NSColor(calibratedWhite: 0.72, alpha: 1)
+                : NSColor(calibratedWhite: 0.94, alpha: 1)
+            b.frame = CGRect(x: Self.edgeInset + CGFloat(i) * Self.buttonWidth,
+                             y: (Self.defaultHeight - Self.buttonHeight) / 2,
+                             width: Self.buttonWidth, height: Self.buttonHeight)
             addSubview(b)
-            x += f.width
         }
-        frame.size = CGSize(width: x + 4, height: Self.defaultHeight)
+        let count = CGFloat(Kind.allCases.count)
+        frame.size = CGSize(width: count * Self.buttonWidth + Self.edgeInset * 2,
+                            height: Self.defaultHeight)
     }
 
-    /// 按按钮实际排布出来的尺寸。positionStrip 用它而不是写死常量，
-    /// 否则中文按钮总宽超出预设值时会被裁掉。
-    public var idealSize: CGSize { frame.size }
-
-    private static let defaultHeight: CGFloat = 30
-
-    private func tooltip(for kind: Kind) -> String {
-        switch kind {
-        case .copy: return "复制到剪贴板 (⌘C)"
-        case .pin: return "钉到屏幕 (回车)"
-        case .save: return "存为文件 (⌘S)"
-        case .reshot: return "重新框选"
-        case .cancel: return "取消 (Esc)"
-        }
-    }
+    private static let defaultHeight: CGFloat = 32
 
     required init?(coder: NSCoder) { fatalError("不支持从 nib 构造") }
+
+    /// 按按钮实际排布出来的尺寸，供 positionStrip 定位用。
+    public var idealSize: CGSize { frame.size }
 
     @objc private func tapped(_ sender: NSButton) {
         let all = Kind.allCases

@@ -16,6 +16,8 @@ public final class FloatingPanel: NSPanel {
         hasShadow = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         isMovable = false
+        // 不开这个，NSTrackingArea 的 .mouseMoved 不会投递，悬停高亮就不跟手
+        acceptsMouseMovedEvents = true
         // 尺寸由 contentRect 与后续 setFrame 决定；不给窗口自身加宽高约束，
         // 否则和 setFrame 抢，表现为面板尺寸弹不回。
     }
