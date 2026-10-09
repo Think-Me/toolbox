@@ -89,19 +89,24 @@ public enum SelectionGeometry {
         return CGRect(x: x, y: y, width: frame.width, height: frame.height)
     }
 
-    /// 操作条默认贴在选区**下沿之下**（AppKit 里 y 更小）；
-    /// 下方放不下就翻到选区上方，再不行就压回屏内。
-    public static func stripFrame(for selection: CGRect, strip: CGSize, screen: CGRect,
+    /// 操作条位置。**输入是 flipped 容器坐标**（左上原点、y 向下）——
+    /// 也就是遮罩视图自己的坐标系，屏幕上"下方"= y 更大。
+    ///
+    /// 别再按 AppKit 的左下原点去理解这个函数：之前混用导致操作条被算到选区上方、
+    /// 落在遮罩的暗区里，用户完全看不到（实测报"点复制钉图都没反应"）。
+    /// 下方放不下才翻到上方，再不行压回容器内。
+    public static func stripFrame(for selection: CGRect, strip: CGSize, container: CGRect,
                                   gap: CGFloat = 8) -> CGRect {
-        var y = selection.minY - gap - strip.height
-        if y < screen.minY {
-            y = selection.maxY + gap
-            if y + strip.height > screen.maxY {
-                y = Swift.max(screen.minY, screen.maxY - strip.height)
+        var y = selection.maxY + gap
+        if y + strip.height > container.maxY {
+            y = selection.minY - gap - strip.height
+            if y < container.minY {
+                y = Swift.min(container.maxY - strip.height,
+                              Swift.max(container.minY, container.maxY - strip.height))
             }
         }
         var x = selection.midX - strip.width / 2
-        x = Swift.max(screen.minX, Swift.min(x, screen.maxX - strip.width))
+        x = Swift.max(container.minX, Swift.min(x, container.maxX - strip.width))
         return CGRect(x: x.rounded(), y: y.rounded(), width: strip.width, height: strip.height)
     }
 

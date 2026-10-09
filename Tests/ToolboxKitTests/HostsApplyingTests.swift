@@ -210,3 +210,77 @@ private func makeApplying(hosts: String, dns: DnsFlushOutcome = .ok) async
     #expect(second.contains("b.local"))
     #expect(second.contains("a.local") == false)
 }
+
+// MARK: ViewModel（用户报"保存并应用点不动、规则存不下来"的那条链）
+
+@MainActor private func makeVM() async -> (HostsViewModel, FakeWriter, URL) {
+    let dir = URL(fileURLWithPath: "/tmp/toolbox-vm-\(UUID().uuidString)")
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let hosts = dir.appendingPathComponent("hosts")
+    try? "127.0.0.1 localhost\n".write(to: hosts, atomically: true, encoding: .utf8)
+    let w = FakeWriter("127.0.0.1 localhost\n")
+    let vm = HostsViewModel(store: HostsStore(file: dir.appendingPathComponent("rules.json")),
+                            applying: HostsApplying(writer: w, dns: FakeDns(outcome: .ok)))
+    return (vm, w, dir)
+}
+
+@MainActor @Test func updateContentMarksDirtyAndChangesRule() async throws {
+    let (vm, _, dir) = await makeVM(); defer { try? FileManager.default.removeItem(at: dir) }
+    let rule = Rule(name: "r", kind: .inline(content: "old\n"))
+    vm.library = HostsLibrary(groups: [RuleGroup(name: "g", rules: [rule])])
+    vm.selectedRuleID = rule.id
+    #expect(vm.hasUnsavedContent == false)
+    vm.updateContent("10.0.0.1 new.local\n")
+    #expect(vm.hasUnsavedContent == true)
+    #expect(vm.selectedRule.map(HostsContentResolver.content) == "10.0.0.1 new.local\n")
+}
+
+@MainActor @Test func commitContentSavesAndApplies() async throws {
+    let (vm, w, dir) = await makeVM(); defer { try? FileManager.default.removeItem(at: dir) }
+    // 规则必须 enabled：关着的规则不参与编译，内容不变会被合法跳过写盘
+    let rule = Rule(name: "r", enabled: true, kind: .inline(content: "old\n"))
+    vm.library = HostsLibrary(groups: [RuleGroup(name: "g", rules: [rule])])
+    vm.selectedRuleID = rule.id
+    vm.updateContent("10.0.0.1 committed.local\n")
+    await vm.commitContent()
+    #expect(vm.hasUnsavedContent == false)
+    let written = try #require(w.lastWrite)
+    #expect(written.contains("committed.local"))
+    // 规则库必须落盘，否则重启后用户改的内容就没了
+    let reloaded = try HostsStore(file: dir.appendingPathComponent("rules.json")).load()
+    #expect(HostsContentResolver.content(of: reloaded.allRules[0]).contains("committed.local"))
+}
+
+@MainActor @Test func dirtyFlagPublishesChange() async throws {
+    // 真正的契约不是"有没有 @Published 这个字"，而是**改动能不能被 SwiftUI 观察到**。
+    // 上一版漏了 @Published，hasUnsavedContent 变了但视图不重算，
+    // "保存并应用"按钮永远灰着（用户实测报的现象）。
+    let (vm, _, dir) = await makeVM()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let rule = Rule(name: "r", kind: .inline(content: "old\n"))
+    vm.library = HostsLibrary(groups: [RuleGroup(name: "g", rules: [rule])])
+    vm.selectedRuleID = rule.id
+
+    let fired = Box(0)
+    let cancellable = vm.objectWillChange.sink { _ in fired.value += 1 }
+    let before = fired.value
+    vm.updateContent("10.0.0.1 new.local\n")
+    await Task.yield()
+    #expect(fired.value > before)
+    cancellable.cancel()
+}
+
+private final class Box: @unchecked Sendable {
+    var value: Int
+    init(_ v: Int) { value = v }
+}
+
+@MainActor @Test func setKindToRemoteThenBackPreservesContent() async throws {
+    let (vm, _, dir) = await makeVM(); defer { try? FileManager.default.removeItem(at: dir) }
+    let rule = Rule(name: "r", kind: .inline(content: "1.1.1.1 a.local\n"))
+    vm.library = HostsLibrary(groups: [RuleGroup(name: "g", rules: [rule])])
+    vm.setKind(rule.id, kind: .remote(url: "https://x/y.txt", cachedContent: nil))
+    #expect(vm.library.allRules[0].kind.displayName.contains("x"))
+    // 远程规则没有缓存内容时不该崩，内容取空串
+    #expect(HostsContentResolver.content(of: vm.library.allRules[0]) == "")
+}

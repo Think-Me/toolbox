@@ -111,29 +111,29 @@ func pointsToPixelsAcrossScreenAndScaleCombos(screenX: Double, scale: Double) {
 
 // MARK: 操作条翻边
 
-// AppKit 坐标 y 向上：屏幕"下方"= y 更小。
+// stripFrame 的输入是 flipped 容器坐标（左上原点，y 向下）：屏幕上"下方"= y 更大。
 
 @Test func actionStripSitsBelowSelectionWhenRoom() {
     let screen = CGRect(x: 0, y: 0, width: 1000, height: 1000)
     let sel = CGRect(x: 100, y: 500, width: 200, height: 30)
     let r = SelectionGeometry.stripFrame(for: sel, strip: CGSize(width: 240, height: 32),
-                                         screen: screen)
-    #expect(r.maxY <= sel.minY + 0.001)      // 贴在选区下沿之下
+                                         container: screen)
+    #expect(r.minY >= sel.maxY - 0.001)      // 贴在选区下沿之下（y 更大）
 }
 
 @Test func actionStripFlipsAboveWhenNoRoomBelow() {
     let screen = CGRect(x: 0, y: 0, width: 1000, height: 1000)
-    let sel = CGRect(x: 100, y: 10, width: 200, height: 30)      // 贴屏幕底边
+    let sel = CGRect(x: 100, y: 960, width: 200, height: 30)     // 贴容器底边
     let r = SelectionGeometry.stripFrame(for: sel, strip: CGSize(width: 240, height: 32),
-                                         screen: screen)
-    #expect(r.minY >= sel.maxY - 0.001)      // 翻到选区上方
+                                         container: screen)
+    #expect(r.maxY <= sel.minY + 0.001)      // 翻到选区上方
 }
 
 @Test func actionStripHorizontallyClamped() {
     let screen = CGRect(x: 0, y: 0, width: 1000, height: 1000)
     let sel = CGRect(x: 950, y: 500, width: 40, height: 30)
     let r = SelectionGeometry.stripFrame(for: sel, strip: CGSize(width: 240, height: 32),
-                                         screen: screen)
+                                         container: screen)
     #expect(r.maxX <= screen.maxX + 0.001)
 }
 

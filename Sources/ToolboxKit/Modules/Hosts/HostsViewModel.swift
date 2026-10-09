@@ -74,7 +74,8 @@ public final class HostsViewModel: ObservableObject {
         })
     }
 
-    public var hasUnsavedContent: Bool = false
+    /// 必须 @Published：不发布的话 SwiftUI 不会重算，"保存并应用"按钮永远灰着。
+    @Published public var hasUnsavedContent: Bool = false
 
     // MARK: 操作
 
@@ -148,6 +149,60 @@ public final class HostsViewModel: ObservableObject {
         if selectedRuleID == id { selectedRuleID = library.allRules.first?.id }
         busy = true
         defer { busy = false }
+        try? store.save(library)
+        await apply(library)
+    }
+
+    /// 改规则类型：内联 / 远程。远程规则必须能在这里填地址，
+    /// 否则"同步远程"按钮就是个没有入口的死功能。
+    public func setKind(_ id: UUID, kind: RuleKind) {
+        for gi in library.groups.indices {
+            for ri in library.groups[gi].rules.indices where library.groups[gi].rules[ri].id == id {
+                library.groups[gi].rules[ri].kind = kind
+                library.groups[gi].rules[ri].lastError = nil
+            }
+        }
+        Task {
+            try? store.save(library)
+            await apply(library)
+        }
+    }
+
+    public func setSyncInterval(_ id: UUID, seconds: TimeInterval?) {
+        for gi in library.groups.indices {
+            for ri in library.groups[gi].rules.indices where library.groups[gi].rules[ri].id == id {
+                library.groups[gi].rules[ri].syncInterval = seconds
+            }
+        }
+        Task { try? store.save(library) }
+    }
+
+    /// 手动同步单条远程规则
+    public func syncOne(_ id: UUID) async {
+        guard let rule = library.allRules.first(where: { $0.id == id }),
+              case .remote(let url, let cached) = rule.kind else { return }
+        busy = true
+        defer { busy = false }
+        let outcome = await sync.sync(url: url, etag: rule.etag, cached: cached)
+        for gi in library.groups.indices {
+            for ri in library.groups[gi].rules.indices where library.groups[gi].rules[ri].id == id {
+                switch outcome {
+                case .updated(let content, let etag):
+                    library.groups[gi].rules[ri].kind = .remote(url: url, cachedContent: content)
+                    library.groups[gi].rules[ri].etag = etag
+                    library.groups[gi].rules[ri].lastSyncAt = Date()
+                    library.groups[gi].rules[ri].lastError = nil
+                    statusMessage = "已同步「\(rule.name)」\(content.utf8.count) 字节"
+                case .notModified:
+                    library.groups[gi].rules[ri].lastSyncAt = Date()
+                    statusMessage = "「\(rule.name)」无更新（304）"
+                case .usedCache(_, let reason):
+                    statusMessage = "「\(rule.name)」拉取失败，沿用缓存：\(reason)"
+                case .failed(let reason):
+                    statusMessage = "「\(rule.name)」同步失败：\(reason)"
+                }
+            }
+        }
         try? store.save(library)
         await apply(library)
     }

@@ -55,6 +55,9 @@ final class PanelDemoDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !AppDelegate.earlyRegular { NSApp.setActivationPolicy(.accessory) }
+        // accessory App 没有菜单条，但 key equivalent 是走主菜单匹配的：
+        // 不装 Edit 菜单，文本视图里的 ⌘C/⌘V/⌘Z/⌘A 全部无效（用户实测：粘贴用不了）
+        MainMenu.install()
         if hold {
             PanelPresenter.shared.show(content: PlaceholderPanelView(text: "panel-hold"),
                                        anchor: .cursor, width: 320, height: 120) { _ in }

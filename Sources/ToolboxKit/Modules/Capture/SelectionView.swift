@@ -16,6 +16,7 @@ public enum CaptureCommit: Equatable, Sendable {
 @MainActor
 public final class SelectionView: NSView {
     private let frozen: NSImage
+    private let frozenCGImage: CGImage?
     private(set) public var state = SelectionState() {
         didSet { needsDisplay = true; positionStrip() }
     }
@@ -28,10 +29,11 @@ public final class SelectionView: NSView {
     }
 
     private let strip = ActionStripView()
-    private static let stripSize = CGSize(width: 268, height: 30)
+    private var stripSize: CGSize { strip.idealSize }
 
-    public init(screenImage: NSImage) {
+    public init(screenImage: NSImage, cgImage: CGImage?) {
         self.frozen = screenImage
+        self.frozenCGImage = cgImage
         super.init(frame: .zero)
         wantsLayer = true
         strip.onAction = { [weak self] kind in self?.stripTapped(kind) }
@@ -56,9 +58,19 @@ public final class SelectionView: NSView {
     // MARK: 绘制
 
     override public func draw(_ dirtyRect: NSRect) {
-        frozen.draw(in: bounds, from: .zero, operation: .copy, fraction: 1)
-
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        // 冻结帧必须用显式 CTM 翻转来画。
+        // `NSImage.draw(in:)` 在本视图（isFlipped=true）里会把画面整个上下颠倒 ——
+        // 因为 CGImage 的行序是自上而下，而 flipped 视图的 CTM 又翻了一次，
+        // 两次翻叠就成了 180° 翻转（用户实测报的现象）。
+        if let cg = frozenCGImage {
+            ctx.saveGState()
+            ctx.translateBy(x: 0, y: bounds.height)
+            ctx.scaleBy(x: 1, y: -1)
+            ctx.interpolationQuality = .none
+            ctx.draw(cg, in: CGRect(origin: .zero, size: bounds.size))
+            ctx.restoreGState()
+        }
         let sel = state.rect ?? .zero
 
         // 半透明遮罩，用 even-odd 在选区处挖洞
@@ -194,8 +206,8 @@ public final class SelectionView: NSView {
 
     private func positionStrip() {
         guard let sel = state.rect else { strip.frame = .zero; return }
-        strip.frame = SelectionGeometry.stripFrame(for: sel, strip: Self.stripSize,
-                                                   screen: bounds)
+        strip.frame = SelectionGeometry.stripFrame(for: sel, strip: stripSize,
+                                                   container: bounds)
     }
 }
 
@@ -218,7 +230,11 @@ public final class ActionStripView: NSView {
         layer?.borderWidth = 1
         var x: CGFloat = 4
         for kind in Kind.allCases {
-            let b = NSButton(title: titles[kind] ?? "", target: nil, action: #selector(tapped(_:)))
+            // target 必须是 self：NSButton(target: nil) 会把 action 沿 responder chain
+            // 往上找，而本视图是 SelectionView 的**兄弟**、不在链上，结果就是
+            // "按钮看得见、点了没反应"（用户实测报的现象）。
+            let b = NSButton(title: titles[kind] ?? "", target: self,
+                             action: #selector(tapped(_:)))
             b.bezelStyle = .inline
             b.isBordered = false
             b.contentTintColor = .white
@@ -235,6 +251,10 @@ public final class ActionStripView: NSView {
         }
         frame.size = CGSize(width: x + 4, height: Self.defaultHeight)
     }
+
+    /// 按按钮实际排布出来的尺寸。positionStrip 用它而不是写死常量，
+    /// 否则中文按钮总宽超出预设值时会被裁掉。
+    public var idealSize: CGSize { frame.size }
 
     private static let defaultHeight: CGFloat = 30
 

@@ -33,7 +33,8 @@ struct HostsTabView: View {
                     .frame(width: 150)
                 Spacer()
                 Button("新建规则") { hosts.addRule() }.controlSize(.small)
-                Button("同步远程") { Task { await hosts.syncAllRemotes() } }.controlSize(.small)
+                Button("同步全部远程") { Task { await hosts.syncAllRemotes(force: true) } }
+                    .controlSize(.small)
                 Button("还原原始 hosts") { Task { await hosts.restoreOriginal() } }
                     .controlSize(.small)
             }
@@ -126,11 +127,68 @@ struct HostsTabView: View {
                         .controlSize(.small)
                         .disabled(!hosts.hasUnsavedContent)
                 }
+                // 规则类型。没有这一段，"远程同步"就是个没有配置入口的死功能
+                // （用户实测问："同步远程是同步哪里的？"）
+                HStack(spacing: 6) {
+                    Text("类型").font(.system(size: 10)).foregroundStyle(.secondary)
+                        .frame(width: 32, alignment: .leading)
+                    Picker("", selection: Binding(
+                        get: { rule.kind.kindTag },
+                        set: { tag in
+                            switch tag {
+                            case .inline:
+                                hosts.setKind(rule.id,
+                                              kind: .inline(content: HostsContentResolver.content(of: rule)))
+                            case .remote:
+                                hosts.setKind(rule.id, kind: .remote(url: "", cachedContent: nil))
+                            }
+                        })) {
+                        Text("内联").tag(RuleKindTag.inline)
+                        Text("远程 URL").tag(RuleKindTag.remote)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().frame(width: 150)
+                    if case .remote(let url, let cached) = rule.kind {
+                        TextField("https://example.com/hosts.txt", text: Binding(
+                            get: { url },
+                            set: { hosts.setKind(rule.id, kind: .remote(url: $0, cachedContent: cached)) }))
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 11))
+                        Button("同步此条") { Task { await hosts.syncOne(rule.id) } }
+                            .controlSize(.small)
+                            .disabled(url.isEmpty)
+                    }
+                }
+                if case .remote = rule.kind {
+                    HStack(spacing: 6) {
+                        Text("自动").font(.system(size: 10)).foregroundStyle(.secondary)
+                            .frame(width: 32, alignment: .leading)
+                        Picker("", selection: Binding(
+                            get: { rule.syncInterval ?? 0 },
+                            set: { hosts.setSyncInterval(rule.id, seconds: $0 == 0 ? nil : $0) })) {
+                            Text("关闭").tag(TimeInterval(0))
+                            Text("每小时").tag(TimeInterval(3600))
+                            Text("每天").tag(TimeInterval(86400))
+                        }
+                        .pickerStyle(.menu).labelsHidden().frame(width: 90)
+                        if let last = rule.lastSyncAt {
+                            Text("上次同步 \(RelativeTime.short(last))")
+                                .font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                        if let err = rule.lastError {
+                            Text(err).font(.system(size: 10)).foregroundStyle(.orange).lineLimit(1)
+                        }
+                    }
+                }
+                if case .localFile(let path) = rule.kind {
+                    Text("只读，内容来自 \(path)")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
                 HostsEditorTextView(
                     text: Binding(
                         get: { HostsContentResolver.content(of: rule) },
                         set: { hosts.updateContent($0) }),
-                    isReadOnly: !HostsContentResolver.isEditable(rule))
+                    isReadOnly: !HostsContentResolver.isEditable(rule),
+                    onTextChange: { hosts.updateContent($0) })
                     .focused($editorFocused)
             }
             .padding(8)
@@ -142,6 +200,21 @@ struct HostsTabView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(20)
+        }
+    }
+}
+
+
+/// 类型选择器用的标签。RuleKind 本身带关联值，不能直接当 Picker 的 selection。
+enum RuleKindTag: Hashable {
+    case inline, remote
+}
+
+extension RuleKind {
+    var kindTag: RuleKindTag {
+        switch self {
+        case .inline, .localFile: return .inline
+        case .remote: return .remote
         }
     }
 }

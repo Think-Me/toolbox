@@ -58,7 +58,7 @@ public final class SelectionOverlayController {
                 let image = NSImage(cgImage: frame.image,
                                     size: NSSize(width: frame.screenFrameInPoints.width,
                                                  height: frame.screenFrameInPoints.height))
-                let v = SelectionView(screenImage: image)
+                let v = SelectionView(screenImage: image, cgImage: frame.image)
                 let w = OverlayWindow(contentRect: frame.screenFrameInPoints,
                                       styleMask: [.borderless],
                                       backing: .buffered, defer: false)
