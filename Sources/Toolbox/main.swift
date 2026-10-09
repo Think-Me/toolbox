@@ -172,6 +172,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
                 return
             }
+            if CommandLine.arguments.contains("--hosts-e2e") {
+                // 拿真 /etc/hosts 做完整往返：写一条测试规则 → 查解析是否生效 → 还原 → 比对字节。
+                // 这一步是 M4 验收的核心，也是唯一能证明"提权 + in-place 写 + 哨兵块模型"
+                // 三者真的协同工作的办法。
+                let paths = AppPaths.standard()
+                let writer = DirectHostsWriter(
+                    path: "/etc/hosts",
+                    backupDirectory: paths.hostsBackupDirectory,
+                    originalSnapshot: paths.hostsOriginal)
+                func inode(_ p: String) -> UInt64? {
+                    var st = stat()
+                    return lstat(p, &st) == 0 ? UInt64(st.st_ino) : nil
+                }
+                do {
+                    let original = try writer.read()
+                    let inoBefore = inode("/etc/hosts")
+                    log("E2E original_bytes=\(original.utf8.count) inode=\(String(describing: inoBefore))\n")
+                    let compiled = try RuleCompiler.compile(
+                        enabled: [NamedRule(name: "toolbox-e2e",
+                                            content: "127.0.0.1 example.toolbox-e2e.test")],
+                        currentHosts: original).get()
+                    try writer.write(compiled.content)
+                    let after = try writer.read()
+                    let inoAfter = inode("/etc/hosts")
+                    log("E2E wrote_bytes=\(after.utf8.count) inodeSame=\(inoBefore == inoAfter) "
+                        + "blockPresent=\(after.contains("example.toolbox-e2e.test")) "
+                        + "userLinesKept=\(after.contains("localhost"))\n")
+                    // 真的刷 DNS 并查解析：证明"写了确实生效"，而不是只改了文件
+                    let flush = DnsFlusher().flush()
+                    log("E2E dnsFlush=\(flush)\n")
+                    let q = Process()
+                    q.executableURL = URL(fileURLWithPath: "/usr/bin/dscacheutil")
+                    q.arguments = ["-q", "host", "-a", "name", "example.toolbox-e2e.test"]
+                    let pipe = Pipe(); q.standardOutput = pipe; q.standardError = pipe
+                    try? q.run(); q.waitUntilExit()
+                    let resolved = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(),
+                                          as: UTF8.self)
+                    log("E2E resolve=\(resolved.replacingOccurrences(of: "\n", with: "|"))\n")
+                    // 规则关掉 = 摘掉托管块
+                    let cleaned = try RuleCompiler.compile(enabled: [], currentHosts: after).get()
+                    try writer.write(cleaned.content)
+                    let restored = try writer.read()
+                    // 只多了结尾一个换行：原文件本来就没有换行，而 hosts 应该以换行结尾
+                    log("E2E blockGone=\(!restored.contains("toolbox-e2e")) "
+                        + "restoredBytes=\(restored.utf8.count) originalBytes=\(original.utf8.count) "
+                        + "onlyDiffIsTrailingNewline=\(restored == original + "\n")\n")
+
+                    // restoreOriginal 走的是原样写回，必须字节级一致
+                    try writer.restoreOriginal()
+                    let exact = try writer.read()
+                    log("E2E restoreOriginal_identical=\(exact == original) "
+                        + "bytes=\(exact.utf8.count)\n")
+                } catch {
+                    log("E2E FAIL \(error)\n")
+                }
+                NSApp.terminate(nil)
+                return
+            }
             if CommandLine.arguments.contains("--pin-demo") {
                 let cs = CGColorSpaceCreateDeviceRGB()
                 let ctx = CGContext(data: nil, width: 300, height: 200, bitsPerComponent: 8,
@@ -271,7 +329,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static let probeFlags = ["--menu-dump", "--menubar-probe", "--hotkey-probe",
                              "--menu-preview", "--panel-demo", "--panel-hold",
                              "--perms", "--smoke-hotkey", "--settings-preview",
-                             "--grant-screen", "--capture-probe", "--pin-demo"]
+                             "--grant-screen", "--capture-probe", "--pin-demo",
+                             "--hosts-e2e"]
     /// 实验：策略在 finishLaunching 之后再改可能完不成激活握手，
     /// 所以 --regular-mode 在 app.run() 之前就把策略定成 .regular。
     static var earlyRegular: Bool { CommandLine.arguments.contains("--regular-mode") }
