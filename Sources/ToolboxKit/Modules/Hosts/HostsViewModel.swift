@@ -153,6 +153,31 @@ public final class HostsViewModel: ObservableObject {
         await apply(library)
     }
 
+    public enum KindTag: Hashable { case inline, remote }
+
+    /// 切换规则类型。**必须把当前文本带进新 kind**：
+    /// 之前切到远程时传 `cachedContent: nil`，于是 内联→远程→内联 会把内容清空，
+    /// 用户看到的就是"规则消失了"。
+    public func switchKind(_ id: UUID, to tag: KindTag) {
+        guard let rule = library.allRules.first(where: { $0.id == id }) else { return }
+        let current = HostsContentResolver.content(of: rule)
+        let kind: RuleKind
+        switch tag {
+        case .inline:
+            // 从远程切回来：优先用已同步下来的缓存内容，它比旧的内联文本新
+            if case .remote(_, let cached) = rule.kind, let cached, !cached.isEmpty {
+                kind = .inline(content: cached)
+            } else {
+                kind = .inline(content: current)
+            }
+        case .remote:
+            let existingURL: String
+            if case .remote(let u, _) = rule.kind { existingURL = u } else { existingURL = "" }
+            kind = .remote(url: existingURL, cachedContent: current)
+        }
+        setKind(id, kind: kind)
+    }
+
     /// 改规则类型：内联 / 远程。远程规则必须能在这里填地址，
     /// 否则"同步远程"按钮就是个没有入口的死功能。
     public func setKind(_ id: UUID, kind: RuleKind) {

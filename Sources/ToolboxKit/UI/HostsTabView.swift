@@ -135,13 +135,8 @@ struct HostsTabView: View {
                     Picker("", selection: Binding(
                         get: { rule.kind.kindTag },
                         set: { tag in
-                            switch tag {
-                            case .inline:
-                                hosts.setKind(rule.id,
-                                              kind: .inline(content: HostsContentResolver.content(of: rule)))
-                            case .remote:
-                                hosts.setKind(rule.id, kind: .remote(url: "", cachedContent: nil))
-                            }
+                            // 业务规则放在 ViewModel 里，视图只做转发
+                            hosts.switchKind(rule.id, to: tag == .inline ? .inline : .remote)
                         })) {
                         Text("内联").tag(RuleKindTag.inline)
                         Text("远程 URL").tag(RuleKindTag.remote)

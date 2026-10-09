@@ -99,8 +99,9 @@ public final class CaptureFlow {
     private func copy(result: SelectionOverlayController.Result) {
         pasteboard.clearContents()
         pasteboard.setData(result.pngData, forType: .png)
-        // 打自写标记，否则这张图会被自己的 monitor 再采一遍进历史
-        pasteboard.setString("capture-\(UUID().uuidString)", forType: .ownWrite)
+        // 故意**不打**自写标记：这是用户主动点的"复制"，他期望这张图出现在
+        // 剪贴板历史里。自写标记只该用于"粘贴"路径（那是我们为了把内容送出去
+        // 而写的，重新采一遍只会虚增计数）。
         onMessage?("已复制截图 \(Int(result.pixelSize.width))×\(Int(result.pixelSize.height))")
     }
 

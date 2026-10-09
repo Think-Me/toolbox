@@ -284,3 +284,33 @@ private final class Box: @unchecked Sendable {
     // 远程规则没有缓存内容时不该崩，内容取空串
     #expect(HostsContentResolver.content(of: vm.library.allRules[0]) == "")
 }
+
+@MainActor @Test func kindRoundTripPreservesContent() async throws {
+    // 用户报"点远程URL再点回内联，规则会消失"：其实是内容被清空了
+    let (vm, _, dir) = await makeVM(); defer { try? FileManager.default.removeItem(at: dir) }
+    let rule = Rule(name: "r", enabled: true, kind: .inline(content: "10.0.0.1 keep.local\n"))
+    vm.library = HostsLibrary(groups: [RuleGroup(name: "g", rules: [rule])])
+    vm.selectedRuleID = rule.id
+
+    vm.switchKind(rule.id, to: .remote)
+    #expect(vm.library.allRules.count == 1)
+    guard case .remote(_, let cached) = vm.library.allRules[0].kind else {
+        Issue.record("应变成 remote"); return
+    }
+    #expect(cached == "10.0.0.1 keep.local\n")
+
+    vm.switchKind(rule.id, to: .inline)
+    #expect(vm.library.allRules.count == 1)
+    #expect(HostsContentResolver.content(of: vm.library.allRules[0]) == "10.0.0.1 keep.local\n")
+    #expect(vm.library.allRules[0].name == "r")
+}
+
+@MainActor @Test func remoteWithFresherCacheWinsOnSwitchBack() async throws {
+    let (vm, _, dir) = await makeVM(); defer { try? FileManager.default.removeItem(at: dir) }
+    let rule = Rule(name: "r", kind: .remote(url: "https://x", cachedContent: "9.9.9.9 synced.local\n"))
+    vm.library = HostsLibrary(groups: [RuleGroup(name: "g", rules: [rule])])
+    vm.selectedRuleID = rule.id
+    vm.switchKind(rule.id, to: .inline)
+    // 已同步下来的内容比旧的更该保留
+    #expect(HostsContentResolver.content(of: vm.library.allRules[0]) == "9.9.9.9 synced.local\n")
+}

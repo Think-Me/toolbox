@@ -1,6 +1,12 @@
 import AppKit
 import ToolboxKit
 
+/// 顶层 `let` 在 main.swift 里是**按语句顺序初始化**的，不是懒加载：
+/// 所以 app 必须声明在所有使用它的顶层分支之前。之前它被删到只剩底部一份，
+/// 上面的 --smoke-hotkey 分支就引用了未初始化的全局变量，表现为
+/// "进程活着但 delegate 回调一次都不触发"（make smoke 静默失败就是这么来的）。
+let app = NSApplication.shared
+
 /// 探针用的假 DNS：真的 DNS 刷新由 --hosts-e2e 单独验
 struct FakeDns: DnsFlushing {
     func flush() -> DnsFlushOutcome { .ok }
@@ -55,9 +61,6 @@ final class PanelDemoDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !AppDelegate.earlyRegular { NSApp.setActivationPolicy(.accessory) }
-        // accessory App 没有菜单条，但 key equivalent 是走主菜单匹配的：
-        // 不装 Edit 菜单，文本视图里的 ⌘C/⌘V/⌘Z/⌘A 全部无效（用户实测：粘贴用不了）
-        MainMenu.install()
         if hold {
             PanelPresenter.shared.show(content: PlaceholderPanelView(text: "panel-hold"),
                                        anchor: .cursor, width: 320, height: 120) { _ in }
@@ -157,6 +160,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !Self.earlyRegular { NSApp.setActivationPolicy(.accessory) }
+        // accessory App 没有菜单条，但 ⌘C/⌘V/⌘Z/⌘A 这类 key equivalent 是走
+        // **主菜单**匹配的。不装 Edit 菜单，文本视图里就"能打字、不能粘贴"。
+        // （上一版这行被误插进 PanelDemoDelegate 的同名方法里，等于没装：
+        //  实测 NSApp.mainMenu == nil）
+        MainMenu.install()
         try? paths.ensureDirectories()
 
         // 动作表只构造一次：全局热键和菜单项共用同一份闭包。
@@ -194,6 +202,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     id.rawValue + "=" + (HotkeyCenter.shared.boundCombo(for: id)?.displayString ?? "-")
                 }.joined(separator: " ")
                 log("HOTKEY_PROBE failed=[\(failed.map(\.rawValue).joined(separator: ","))] \(bound)\n")
+                NSApp.terminate(nil)
+                return
+            }
+            if CommandLine.arguments.contains("--menu-probe") {
+                // 粘贴问题的取证：主菜单到底装没装、Paste 项能不能被校验通过
+                guard let main = NSApp.mainMenu else {
+                    log("MENUPROBE mainMenu=nil\n"); NSApp.terminate(nil); return
+                }
+                log("MENUPROBE topItems=\(main.items.count) autoenables=\(main.autoenablesItems)\n")
+                for (i, top) in main.items.enumerated() {
+                    let subs = (top.submenu?.items ?? []).map { it in
+                        "\(it.title)[\(it.action.map(NSStringFromSelector) ?? "-")/\(it.keyEquivalent)]"
+                    }.joined(separator: " ")
+                    log("MENUPROBE [\(i)] '\(top.title)' autoenables=\(top.submenu?.autoenablesItems.description ?? "-") → \(subs)\n")
+                }
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.setString("probe text", forType: .string)
+                let edit = main.items.compactMap(\.submenu).first { $0.title == "编辑" }
+                if let paste = edit?.items.first(where: { $0.action == #selector(NSText.paste(_:)) }) {
+                    log("MENUPROBE pasteItem.isEnabled=\(paste.isEnabled) (autoenables 会覆盖它)\n")
+                }
+                // 图片型剪贴板：STTextView 的 paste 校验要求 string(forType:) != nil，
+                // 剪贴板里只有图时 Paste 项会被它自己禁用
+                pb.clearContents()
+                pb.setData(Data([0x89, 0x50, 0x4E, 0x47]), forType: .png)
+                log("MENUPROBE 图片剪贴板时 string(forType:.string)=\(pb.string(forType: .string) ?? "nil")\n")
                 NSApp.terminate(nil)
                 return
             }
@@ -386,7 +421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                              "--menu-preview", "--panel-demo", "--panel-hold",
                              "--perms", "--smoke-hotkey", "--settings-preview",
                              "--grant-screen", "--capture-probe", "--pin-demo",
-                             "--hosts-e2e"]
+                             "--hosts-e2e", "--menu-probe"]
     /// 实验：策略在 finishLaunching 之后再改可能完不成激活握手，
     /// 所以 --regular-mode 在 app.run() 之前就把策略定成 .regular。
     static var earlyRegular: Bool { CommandLine.arguments.contains("--regular-mode") }
@@ -551,7 +586,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-let app = NSApplication.shared
 if AppDelegate.earlyRegular { app.setActivationPolicy(.regular) }
 // NSApplication.delegate 是**弱引用**：delegate 必须放在有生命周期的存储里，
 // 直接 `app.delegate = Foo()` 会在下一行就被 ARC 回收，表现为"回调从来不触发"。

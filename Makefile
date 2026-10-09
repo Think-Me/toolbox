@@ -20,10 +20,14 @@ run: app
 smoke: build
 	@BIN=$$(swift build -c $(CONFIG) --show-bin-path)/Toolbox; \
 	swiftc -O -o /tmp/toolbox-smoke-post Scripts/smoke-post-hotkey.swift; \
+	swiftc -O -o /tmp/toolbox-smoke-check Tests/../Scripts/smoke-post-hotkey.swift 2>/dev/null; \
 	rm -f /tmp/toolbox-smoke.log; \
 	"$$BIN" --smoke-hotkey 2>/tmp/toolbox-smoke.log & \
 	LISTENER=$$!; sleep 2; /tmp/toolbox-smoke-post; sleep 1; \
-	cat /tmp/toolbox-smoke.log; kill $$LISTENER 2>/dev/null || true
+	cat /tmp/toolbox-smoke.log; kill $$LISTENER 2>/dev/null || true; \
+	grep -q "^FIRED$$" /tmp/toolbox-smoke.log \
+	  || { echo "❌ smoke 失败：没等到 FIRED，热键回调没触发（或进程根本没跑起来）"; exit 1; }; \
+	echo "✅ smoke 通过：热键注册成功且回调真的被触发"
 
 # 打印两项系统权限的真实状态（对照 spec §2.4 / §4.3）
 perms:
