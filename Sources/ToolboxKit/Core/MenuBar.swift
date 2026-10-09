@@ -13,9 +13,11 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         public var settings: AppSettings
         public var recording: Bool
         public var loginItemEnabled: Bool
-        public init(settings: AppSettings, recording: Bool, loginItemEnabled: Bool) {
+        public var hosts: HostsMenuSnapshot
+        public init(settings: AppSettings, recording: Bool, loginItemEnabled: Bool,
+                    hosts: HostsMenuSnapshot = .empty) {
             self.settings = settings; self.recording = recording
-            self.loginItemEnabled = loginItemEnabled
+            self.loginItemEnabled = loginItemEnabled; self.hosts = hosts
         }
     }
 
@@ -124,9 +126,9 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
     /// 每次打开都重建：设置、暂停态、登录项状态都会变，缓存菜单必然出现陈旧勾选。
     public func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        for spec in MenuBuilder.items(settings: stateProvider().settings,
-                                      recording: stateProvider().recording,
-                                      loginItemEnabled: stateProvider().loginItemEnabled) {
+        let st = stateProvider()
+        for spec in MenuBuilder.items(settings: st.settings, recording: st.recording,
+                                      loginItemEnabled: st.loginItemEnabled, hosts: st.hosts) {
             menu.addItem(make(spec))
         }
     }
@@ -169,6 +171,8 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         case .openPermissions:    actions.openPermissions()
         case .openSettings:       actions.openSettings()
         case .toggleLoginItem:    actions.toggleLoginItem()
+        case .hostsToggle(let id): actions.hostsToggle(id)
+        case .hostsManagementToggle: actions.hostsManagementToggle()
         case .quit:               actions.quit()
         case .separator, .disabledPlaceholder: break
         }

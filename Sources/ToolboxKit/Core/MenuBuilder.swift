@@ -9,6 +9,8 @@ public struct MenuItemSpec: Equatable, Sendable {
         case openPermissions
         case openSettings
         case toggleLoginItem
+        case hostsToggle(UUID)
+        case hostsManagementToggle
         case quit
         case separator
         /// 明确标注"这版还没接"的行，置灰且不可点。
@@ -52,6 +54,8 @@ public struct AppActions {
     public var openPermissions: @MainActor () -> Void
     public var openSettings: @MainActor () -> Void
     public var toggleLoginItem: @MainActor () -> Void
+    public var hostsToggle: @MainActor (UUID) -> Void
+    public var hostsManagementToggle: @MainActor () -> Void
     public var quit: @MainActor () -> Void
 
     public init(clipboard: @escaping @MainActor () -> Void,
@@ -63,6 +67,8 @@ public struct AppActions {
                 openPermissions: @escaping @MainActor () -> Void,
                 openSettings: @escaping @MainActor () -> Void,
                 toggleLoginItem: @escaping @MainActor () -> Void,
+                hostsToggle: @escaping @MainActor (UUID) -> Void,
+                hostsManagementToggle: @escaping @MainActor () -> Void,
                 quit: @escaping @MainActor () -> Void) {
         self.clipboard = clipboard
         self.hostsQuick = hostsQuick
@@ -73,6 +79,8 @@ public struct AppActions {
         self.openPermissions = openPermissions
         self.openSettings = openSettings
         self.toggleLoginItem = toggleLoginItem
+        self.hostsToggle = hostsToggle
+        self.hostsManagementToggle = hostsManagementToggle
         self.quit = quit
     }
 
@@ -89,18 +97,39 @@ public struct AppActions {
     }
 }
 
+/// 菜单要显示的真实规则快照。传值进来而不是让 MenuBuilder 去读全局状态，
+/// 这样它保持纯函数、可单测。
+public struct HostsMenuRow: Equatable, Sendable {
+    public let id: UUID
+    public let group: String
+    public let name: String
+    public let enabled: Bool
+    public init(id: UUID, group: String, name: String, enabled: Bool) {
+        self.id = id; self.group = group; self.name = name; self.enabled = enabled
+    }
+}
+
+public struct HostsMenuSnapshot: Equatable, Sendable {
+    public let managementOn: Bool
+    public let rows: [HostsMenuRow]
+    public init(managementOn: Bool, rows: [HostsMenuRow]) {
+        self.managementOn = managementOn; self.rows = rows
+    }
+    public static let empty = HostsMenuSnapshot(managementOn: true, rows: [])
+}
+
 public enum MenuBuilder {
 
     public static func items(settings: AppSettings, recording: Bool,
-                             loginItemEnabled: Bool) -> [MenuItemSpec] {
+                             loginItemEnabled: Bool,
+                             hosts: HostsMenuSnapshot = .empty) -> [MenuItemSpec] {
         let out: [MenuItemSpec] = [
             hotkeyItem("剪贴板历史", .clipboard, settings),
             MenuItemSpec(title: "Hosts 规则",
                          keyEquivalent: charAndMask(settings.hotkeys[.hostsQuick]).0,
                          keyEquivalentMask: charAndMask(settings.hotkeys[.hostsQuick]).1,
                          action: .hotkey(.hostsQuick),
-                         children: [MenuItemSpec(title: "规则列表（M4 接入）",
-                                                 action: .disabledPlaceholder)]),
+                         children: hostsSubmenu(hosts)),
             hotkeyItem("区域截图", .captureRegion, settings),
             hotkeyItem("全屏截图", .captureFull, settings),
             hotkeyItem("关闭所有贴图", .killAllPins, settings),
@@ -118,6 +147,27 @@ public enum MenuBuilder {
             MenuItemSpec(title: "退出 Toolbox", action: .quit),
         ]
         return out
+    }
+
+    /// 子菜单：总开关 + 每条规则一行（勾选即切换）。
+    static func hostsSubmenu(_ snapshot: HostsMenuSnapshot) -> [MenuItemSpec] {
+        var children = [MenuItemSpec(
+            title: snapshot.managementOn ? "Hosts 托管：开" : "Hosts 托管：关",
+            checked: snapshot.managementOn, action: .hostsManagementToggle)]
+        guard snapshot.managementOn else { return children }
+        if snapshot.rows.isEmpty {
+            children.append(MenuItemSpec(title: "（还没有规则，去设置里新建）",
+                                         action: .disabledPlaceholder))
+            return children
+        }
+        var lastGroup: String?
+        for row in snapshot.rows {
+            if row.group != lastGroup, lastGroup != nil { children.append(.separator) }
+            lastGroup = row.group
+            children.append(MenuItemSpec(title: row.name, checked: row.enabled,
+                                         action: .hostsToggle(row.id)))
+        }
+        return children
     }
 
     private static func hotkeyItem(_ title: String, _ id: HotkeyID,

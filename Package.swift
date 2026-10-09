@@ -4,10 +4,15 @@ import PackageDescription
 let package = Package(
     name: "Toolbox",
     platforms: [.macOS(.v14)],
+    dependencies: [
+        // hosts 规则编辑器：带行号与语法高亮的代码编辑器
+        .package(url: "https://github.com/krzyzanowskim/STTextView.git", from: "2.4.0"),
+    ],
     targets: [
         // 库 target：全部可测试逻辑。SwiftPM 的 test target 不能 import executable target，
         // 所以逻辑必须放这里，否则单测一行都跑不了。
         .target(name: "ToolboxKit",
+                dependencies: [.product(name: "STTextView", package: "STTextView")],
                 swiftSettings: [.swiftLanguageMode(.v6)],
                 // 用系统 libsqlite3，不引 GRDB：本项目的表结构很小很稳定。
                 linkerSettings: [.linkedLibrary("sqlite3")]),

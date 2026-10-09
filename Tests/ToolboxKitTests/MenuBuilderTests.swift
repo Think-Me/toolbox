@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import ToolboxKit
 
@@ -45,8 +46,7 @@ import Testing
     let items = MenuBuilder.items(settings: .default, recording: true, loginItemEnabled: false)
     let hosts = items.first { $0.title == "Hosts 规则" }!
     #expect(hosts.children.isEmpty == false)          // 声明了子菜单就必须有内容，不许空数组冒充
-    #expect(hosts.children[0].title.contains("M4"))   // M0 阶段是明确标注的延后项，不是占位符
-    #expect(hosts.children[0].action == .disabledPlaceholder)
+    #expect(hosts.children[0].action == .hostsManagementToggle)
 }
 
 @Test func loginItemRowCarriesCurrentState() {
@@ -61,7 +61,8 @@ import Testing
     for it in items where !it.isSeparator {
         switch it.action {
         case .hotkey, .togglePause, .openPermissions, .openSettings,
-             .toggleLoginItem, .quit, .separator, .disabledPlaceholder:
+             .toggleLoginItem, .hostsToggle, .hostsManagementToggle,
+             .quit, .separator, .disabledPlaceholder:
             break
         }
     }
@@ -70,4 +71,38 @@ import Testing
         if case .hotkey(let id) = spec.action { return id } else { return nil }
     })
     #expect(hotkeys == Set(HotkeyID.allCases))
+}
+
+@Test func hostsSubmenuListsRealRulesWithCheckState() {
+    let idA = UUID(), idB = UUID()
+    let snap = HostsMenuSnapshot(managementOn: true, rows: [
+        .init(id: idA, group: "公司", name: "内网", enabled: true),
+        .init(id: idB, group: "个人", name: "测试", enabled: false),
+    ])
+    let items = MenuBuilder.items(settings: .default, recording: true,
+                                  loginItemEnabled: false, hosts: snap)
+    let children = items.first { $0.title == "Hosts 规则" }!.children
+    #expect(children[0].action == .hostsManagementToggle)
+    #expect(children[0].checked == true)
+    let toggles = children.compactMap { spec -> UUID? in
+        if case .hostsToggle(let id) = spec.action { return id } else { return nil }
+    }
+    #expect(toggles == [idA, idB])
+    #expect(children.first { $0.title == "内网" }?.checked == true)
+    #expect(children.first { $0.title == "测试" }?.checked == false)
+}
+
+@Test func hostsSubmenuHidesRulesWhenManagementOff() {
+    let snap = HostsMenuSnapshot(managementOn: false, rows: [
+        .init(id: UUID(), group: "g", name: "r", enabled: true)])
+    let children = MenuBuilder.hostsSubmenu(snap)
+    #expect(children.count == 1)
+    #expect(children[0].title == "Hosts 托管：关")
+}
+
+@Test func hostsSubmenuWithNoRulesTellsUserWhatToDo() {
+    let children = MenuBuilder.hostsSubmenu(.empty)
+    #expect(children.count == 2)
+    #expect(children[1].title.contains("新建"))
+    #expect(children[1].action == .disabledPlaceholder)
 }

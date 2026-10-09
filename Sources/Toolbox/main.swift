@@ -1,12 +1,16 @@
 import AppKit
 import ToolboxKit
 
+/// 探针用的假 DNS：真的 DNS 刷新由 --hosts-e2e 单独验
+struct FakeDns: DnsFlushing {
+    func flush() -> DnsFlushOutcome { .ok }
+}
+
 // 任务 5 的端到端冒烟入口。任务 11 收尾时整段删除。
 // 本地类可以正常当 NSApplicationDelegate（实测 applicationDidFinishLaunching: 照常回调），
 // 但绝不许把这段抽进普通 func —— 非 @MainActor 函数里访问 NSApplication.shared 会触发
 // Swift 6 的 main-actor 隔离警告。main.swift 顶层代码本身是 MainActor 隔离的。
 if CommandLine.arguments.contains("--smoke-hotkey") {
-    let app = NSApplication.shared
 
     final class Smoke: NSObject, NSApplicationDelegate {
         func applicationDidFinishLaunching(_ notification: Notification) {
@@ -116,6 +120,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store: clipboardStore, media: media, simulator: pasteSimulator,
         settings: { [weak self] in self?.model.settings ?? .default })
     lazy var captureFlow = CaptureFlow(settings: { [weak self] in self?.model.settings ?? .default })
+
+    // MARK: Hosts 模块
+    lazy var hostsStore = HostsStore(file: paths.hostsRules)
+    lazy var hostsApplying = HostsApplying(
+        writer: DirectHostsWriter(path: "/etc/hosts",
+                                  backupDirectory: paths.hostsBackupDirectory,
+                                  originalSnapshot: paths.hostsOriginal))
+    lazy var hostsModel = HostsViewModel(store: hostsStore, applying: hostsApplying)
+    var hostsPanel: HostsQuickPanelView?
+
+    var hostsSnapshot: HostsMenuSnapshot {
+        HostsMenuSnapshot(managementOn: hostsModel.library.managementOn,
+                          rows: hostsModel.library.groups.flatMap { g in
+                              g.rules.map { HostsMenuRow(id: $0.id, group: g.name, name: $0.name,
+                                                         enabled: $0.enabled) }
+                          })
+    }
     lazy var monitor = ClipboardMonitor(
         store: clipboardStore, media: media, inputs: .live(),
         settings: { [weak self] in self?.model.settings ?? .default },
@@ -144,7 +165,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state: { [weak self] in
                 MenuBarController.State(settings: self?.model.settings ?? .default,
                                         recording: self?.recording ?? true,
-                                        loginItemEnabled: self?.model.loginItemEnabled ?? false)
+                                        loginItemEnabled: self?.model.loginItemEnabled ?? false,
+                                        hosts: self?.hostsSnapshot ?? .empty)
             },
             actions: acts)
         if controller.install() {
@@ -170,6 +192,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }.joined(separator: " ")
                 log("HOTKEY_PROBE failed=[\(failed.map(\.rawValue).joined(separator: ","))] \(bound)\n")
                 NSApp.terminate(nil)
+                return
+            }
+            if CommandLine.arguments.contains("--hosts-vm-probe") {
+                Task { @MainActor in
+                // ViewModel → HostsApplying → DirectHostsWriter 全链路，
+                // 但 hosts 指向临时文件：不碰真 /etc/hosts（那条已由 --hosts-e2e 单独验过）
+                let dir = URL(fileURLWithPath: "/tmp/toolbox-vmprobe-\(UUID().uuidString)")
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let fakeHosts = dir.appendingPathComponent("hosts")
+                try? "127.0.0.1 localhost\n::1 localhost\n".write(to: fakeHosts, atomically: true,
+                                                                    encoding: .utf8)
+                let writer = DirectHostsWriter(path: fakeHosts.path,
+                                               backupDirectory: dir.appendingPathComponent("backup"),
+                                               originalSnapshot: dir.appendingPathComponent("original"))
+                let store = HostsStore(file: dir.appendingPathComponent("rules.json"))
+                let vm = HostsViewModel(store: store, applying: HostsApplying(writer: writer,
+                                                                              dns: FakeDns()))
+                let rule = Rule(name: "内网", kind: .inline(content: "10.0.0.1 intranet.local\n"))
+                vm.library = HostsLibrary(groups: [RuleGroup(name: "公司", rules: [rule])])
+                log("VMPROBE initial enabled=\(vm.library.enabledRules.count)\n")
+                await vm.toggle(rule.id)
+                let after = (try? String(contentsOf: fakeHosts, encoding: .utf8)) ?? "?"
+                log("VMPROBE status=\(vm.statusMessage ?? "nil")\n")
+                log("VMPROBE hostsContent=\(after.replacingOccurrences(of: "\n", with: "|"))\n")
+                await vm.toggle(rule.id)
+                let off = (try? String(contentsOf: fakeHosts, encoding: .utf8)) ?? "?"
+                log("VMPROBE afterOff=\(off.replacingOccurrences(of: "\n", with: "|"))\n")
+                log("VMPROBE rulesJsonSaved=\(FileManager.default.fileExists(atPath: dir.appendingPathComponent("rules.json").path))\n")
+                try? FileManager.default.removeItem(at: dir)
+                NSApp.terminate(nil)
+                }
                 return
             }
             if CommandLine.arguments.contains("--hosts-e2e") {
@@ -431,7 +484,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         return AppActions(
             clipboard: { [weak self] in self?.clipboardPanel.show() },
-            hostsQuick: {},
+            hostsQuick: { [weak self] in self?.showHostsPanel() },
             captureRegion: { [weak self] in self?.captureFlow.startRegionCapture() },
             captureFull: { [weak self] in self?.captureFlow.captureFullScreenAndPin() },
             killAllPins: { PinManager.shared.closeAll() },
@@ -439,6 +492,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openPermissions: { [weak self] in self?.showSettings() },
             openSettings: { [weak self] in self?.showSettings() },
             toggleLoginItem: { [weak self] in self?.model.toggleLoginItem() },
+            hostsToggle: { [weak self] id in
+                Task { @MainActor in await self?.hostsModel.toggle(id) }
+            },
+            hostsManagementToggle: { [weak self] in
+                Task { @MainActor in
+                    await self?.hostsModel.setManagementOn(!(self?.hostsModel.library.managementOn ?? true))
+                }
+            },
             quit: { NSApp.terminate(nil) })
     }
 
@@ -450,9 +511,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showSettings() {
-        if settingsWindow == nil { settingsWindow = SettingsWindowController(model: model) }
+        if settingsWindow == nil {
+            settingsWindow = SettingsWindowController(model: model, hostsModel: hostsModel)
+        }
         settingsWindow?.show()
     }
+
+    /// `⌘⇧H`：快速切换浮层。勾选攒着，关闭时一次性应用。
+    func showHostsPanel() {
+        let panel = HostsQuickPanelView()
+        panel.load(hostsSnapshot.rows.map {
+            HostsQuickPanelView.Row(id: $0.id, group: $0.group, name: $0.name,
+                                    enabled: $0.enabled, kindLabel: "")
+        })
+        panel.onChanged = { [weak self] ids in
+            Task { @MainActor in
+                for id in ids { await self?.hostsModel.toggle(id) }
+            }
+        }
+        panel.onCancel = { [weak self] in
+            self?.hostsPanel = nil
+            self?.panelPresenter.dismissCurrent(reason: .explicitClose)
+        }
+        hostsPanel = panel
+        panelPresenter.show(content: panel, anchor: .cursor, width: 360, height: 380) { [weak self] _ in
+            self?.hostsPanel?.flushPending()
+            self?.hostsPanel = nil
+        }
+    }
+
+    let panelPresenter = PanelPresenter.shared
 
     func showPlaceholder() {
         PanelPresenter.shared.show(content: PlaceholderPanelView(text: "M0 占位浮层"),
