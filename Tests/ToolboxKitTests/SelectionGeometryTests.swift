@@ -136,3 +136,26 @@ func pointsToPixelsAcrossScreenAndScaleCombos(screenX: Double, scale: Double) {
                                          screen: screen)
     #expect(r.maxX <= screen.maxX + 0.001)
 }
+
+@Test func flippedRectToPixelsDoesNotFlipY() {
+    // 遮罩视图本身是左上原点：选区在屏幕顶部 → 像素 y 必须接近 0，
+    // 而不是被再翻一次跑到图像底部
+    let px = SelectionGeometry.flippedRectToPixels(CGRect(x: 10, y: 0, width: 20, height: 30),
+                                                   scale: 2)
+    #expect(px == CGRect(x: 20, y: 0, width: 40, height: 60))
+    let bottom = SelectionGeometry.flippedRectToPixels(CGRect(x: 0, y: 900, width: 10, height: 10),
+                                                       scale: 2)
+    #expect(bottom.minY == 1800)
+}
+
+@Test func flippedAndAppKitConversionsDifferOnY() {
+    let screen = CGRect(x: 0, y: 0, width: 1000, height: 800)
+    let appkit = SelectionGeometry.pointsToPixels(CGRect(x: 100, y: 600, width: 50, height: 50),
+                                                  screenFrame: screen, scale: 1)
+    // AppKit y=600（靠近顶部）→ 顶原点 y = 800-600-50 = 150
+    #expect(appkit.minY == 150)
+    let flipped = SelectionGeometry.flippedRectToPixels(CGRect(x: 100, y: 600, width: 50, height: 50),
+                                                        scale: 1)
+    // 顶原点 y=600 就是 600，不翻
+    #expect(flipped.minY == 600)
+}

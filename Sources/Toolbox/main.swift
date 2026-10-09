@@ -96,6 +96,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var menuBar: MenuBarController?
     var actions: AppActions?
     var settingsWindow: SettingsWindowController?
+    /// 贴图总管是单例，但方向/上下限这些参数要从入口注入
+    private var pinsOfCapture: PinManager { .shared }
     /// 设置的唯一来源。AppDelegate 里再存一份 settings 会在"录制改键 → 菜单/热键读哪份"上分叉。
     let model: AppModel
 
@@ -113,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var clipboardPanel = ClipboardPanelController(
         store: clipboardStore, media: media, simulator: pasteSimulator,
         settings: { [weak self] in self?.model.settings ?? .default })
+    lazy var captureFlow = CaptureFlow(settings: { [weak self] in self?.model.settings ?? .default })
     lazy var monitor = ClipboardMonitor(
         store: clipboardStore, media: media, inputs: .live(),
         settings: { [weak self] in self?.model.settings ?? .default },
@@ -351,6 +354,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if recording { monitor.start() }
                 model.clipboardStore = clipboardStore
                 model.mediaStore = media
+                clipboardPanel.onPinImage = { data in
+                    PinManager.shared.pinAtCursor(pngData: data)
+                }
             } catch {
                 log("剪贴板初始化失败: \(error)\n")
             }
@@ -359,11 +365,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func makeActions() -> AppActions {
         model.onHotkeysChanged = { [weak self] _ in self?.reregisterHotkeys() }
+        captureFlow.onMessage = { text in DegradeNotice.shared.show(text) }
+        pinsOfCapture.settingsProvider = { [weak self] in self?.model.settings ?? .default }
+        pinsOfCapture.magnifySignProvider = { [weak self] in
+            (self?.model.settings.scrollZoomDirection ?? .upMagnifies) == .downMagnifies ? -1 : 1
+        }
         return AppActions(
             clipboard: { [weak self] in self?.clipboardPanel.show() },
             hostsQuick: {},
-            captureRegion: { [weak self] in self?.showPlaceholder() },
-            captureFull: {}, killAllPins: {},
+            captureRegion: { [weak self] in self?.captureFlow.startRegionCapture() },
+            captureFull: { [weak self] in self?.captureFlow.captureFullScreenAndPin() },
+            killAllPins: { PinManager.shared.closeAll() },
             togglePause: { [weak self] in self?.toggleRecording() },
             openPermissions: { [weak self] in self?.showSettings() },
             openSettings: { [weak self] in self?.showSettings() },

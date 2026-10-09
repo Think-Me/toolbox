@@ -198,6 +198,24 @@ public final class AppModel: ObservableObject {
         try? store.save(settings)
     }
 
+    // MARK: 截图与贴图设置
+
+    public func setScrollZoomDirection(_ d: AppSettings.ZoomDirection) {
+        settings.scrollZoomDirection = d
+        persist()
+    }
+
+    public func resetZoomRange() {
+        settings.pinMinZoom = AppSettings.default.pinMinZoom
+        settings.pinMaxZoom = AppSettings.default.pinMaxZoom
+        persist()
+    }
+
+    public func setPinsParticipateInCapture(_ on: Bool) {
+        settings.pinsParticipateInCapture = on
+        persist()
+    }
+
     // MARK: 登录项
 
     public func toggleLoginItem() {

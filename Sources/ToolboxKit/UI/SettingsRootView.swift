@@ -19,8 +19,7 @@ public struct SettingsRootView: View {
             ComingSoonView(title: "Hosts", milestone: "M4",
                            lines: ["规则库编辑", "远程规则同步", "授权与还原"])
                 .tabItem { Label("Hosts", systemImage: "network") }
-            ComingSoonView(title: "截图与贴图", milestone: "M2",
-                           lines: ["贴图缩放上下限", "滚轮方向", "截图前是否隐藏贴图"])
+            CaptureTabView(model: model)
                 .tabItem { Label("截图与贴图", systemImage: "camera.viewfinder") }
         }
         .frame(width: 560, height: 420)

@@ -38,11 +38,36 @@ public final class PinManager {
         return window
     }
 
-    /// 从 PNG 数据钉图（剪贴板图片条目、截图结果都走这里）
+    /// 从 PNG 数据钉图（截图结果、剪贴板图片条目都走这里）
     @discardableResult
     public func pin(pngData: Data, at screenFrame: CGRect) -> PinWindow? {
         guard let image = NSImage(data: pngData) else { return nil }
+        image.size = screenFrame.size          // 同 CaptureFlow：别让 Retina 像素当 point
         return pin(image, at: screenFrame)
+    }
+
+    /// 钉在光标处，尺寸取 PNG 的像素尺寸按 scale 折回 points。
+    /// 剪贴板里的图片没有"原选区位置"可参照，只能落在光标附近。
+    @discardableResult
+    public func pinAtCursor(pngData: Data, scale: CGFloat = 2) -> PinWindow? {
+        guard let px = ImageCodec.pixelSize(ofPNG: pngData),
+              let image = NSImage(data: pngData) else { return nil }
+        let size = CGSize(width: px.width / scale, height: px.height / scale)
+        image.size = size
+        let cursor = NSEvent.mouseLocation
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(cursor) })
+                ?? NSScreen.main else { return nil }
+        // 太大就按屏高缩放，否则贴图会大到没法一次看完、也拖不出边界
+        var s = size
+        let maxH = screen.visibleFrame.height * 0.8, maxW = screen.visibleFrame.width * 0.8
+        if s.height > maxH || s.width > maxW {
+            let k = Swift.min(maxH / s.height, maxW / s.width)
+            s = CGSize(width: s.width * k, height: s.height * k)
+            image.size = s
+        }
+        let origin = CGPoint(x: cursor.x - s.width / 2, y: cursor.y - s.height / 2)
+        return pin(image, at: SelectionGeometry.clampedToScreen(
+            CGRect(origin: origin, size: s), screen: screen.frame, visible: screen.visibleFrame))
     }
 
     public func destroy(_ window: PinWindow) {

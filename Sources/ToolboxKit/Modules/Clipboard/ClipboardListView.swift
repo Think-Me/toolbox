@@ -13,6 +13,8 @@ public final class ClipboardRootView: NSView {
     public var onQuickPick: ((UInt16) -> Bool)?
     public var onPinToggled: (() -> Bool)?
     public var onDeleteRequested: (() -> Bool)?
+    /// ⌘E：把选中的图片条目钉到屏幕（剪贴板 → 贴图，唯一的跨模块出口）
+    public var onPinToScreenRequested: (() -> Bool)?
 
     public override var isFlipped: Bool { true }
 
@@ -25,6 +27,8 @@ public final class ClipboardRootView: NSView {
         switch event.keyCode {
         case UInt16(kVK_ANSI_P):
             return onPinToggled?() ?? false
+        case UInt16(kVK_ANSI_E):
+            return onPinToScreenRequested?() ?? false
         case UInt16(kVK_Delete):
             return onDeleteRequested?() ?? false
         default:

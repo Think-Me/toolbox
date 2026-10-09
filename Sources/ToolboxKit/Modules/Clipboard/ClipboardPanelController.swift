@@ -23,6 +23,8 @@ public final class ClipboardPanelController: NSResponder {
     private var listView: ClipboardListView?
     private var query = ""
     private var degradeNote: String?
+    /// 把图片条目钉到屏幕。由入口注入，保持 Clipboard 不直接依赖 PinManager 的构造细节。
+    public var onPinImage: ((Data) -> Void)?
 
     public static var panelWidth: CGFloat { ClipboardStyle.panelWidth }
     public static let panelHeight: CGFloat = 420
@@ -54,6 +56,7 @@ public final class ClipboardPanelController: NSResponder {
         view.root.onQuickPick = { [weak self] keyCode in self?.quickPick(keyCode) ?? false }
         view.onRowClicked = { [weak self] row in self?.clickRow(row) }
         view.root.onPinToggled = { [weak self] in self?.togglePin() ?? false }
+        view.root.onPinToScreenRequested = { [weak self] in self?.pinCurrentImage() ?? false }
         view.root.onDeleteRequested = { [weak self] in self?.deleteCurrent() ?? false }
         listView = view
 
@@ -141,6 +144,15 @@ public final class ClipboardPanelController: NSResponder {
             try? await store.setPinned(id: item.id, !item.pinned)
             await reload()
         }
+        return true
+    }
+
+    /// ⌘E：仅对图片条目有效
+    private func pinCurrentImage() -> Bool {
+        guard let item = selection.current(in: items), item.kind == .image,
+              let sha = item.mediaSHA256, let data = try? media.data(sha: sha) else { return false }
+        onPinImage?(data)
+        presenter.dismissCurrent(reason: .chose)
         return true
     }
 

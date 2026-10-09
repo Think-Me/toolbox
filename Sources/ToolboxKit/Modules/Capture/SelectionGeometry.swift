@@ -42,6 +42,18 @@ public enum SelectionGeometry {
                       width: min(pw, maxX), height: min(ph, maxY))
     }
 
+    /// 遮罩视图（flipped，左上原点、y 向下）里的选区 → 该屏 CGImage 的像素 rect。
+    ///
+    /// 与 `pointsToPixels` **不能混用**：那个吃的是 AppKit 全局坐标（左下原点）要翻 Y，
+    /// 这个的输入已经是顶原点，再翻一次就会裁出上下颠倒的图（静默错误，最难查）。
+    public static func flippedRectToPixels(_ rect: CGRect, scale: CGFloat) -> CGRect {
+        let x = (rect.minX * scale).rounded()
+        let y = (rect.minY * scale).rounded()
+        let w = max(1, (rect.width * scale).rounded())
+        let h = max(1, (rect.height * scale).rounded())
+        return CGRect(x: Swift.max(0, x), y: Swift.max(0, y), width: w, height: h)
+    }
+
     public static func clampZoom(_ raw: CGFloat, min: CGFloat, max: CGFloat) -> CGFloat {
         Swift.max(min, Swift.min(max, raw))
     }
