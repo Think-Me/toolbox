@@ -34,7 +34,7 @@ public struct CompileResult: Equatable, Sendable {
     public var stats: CompileStats
 }
 
-public enum CompileError: Error, Equatable {
+public enum CompileError: Error, Equatable, Sendable {
     /// 哨兵标签不配对。绝不猜测托管块的范围：
     /// 猜错会把用户手写的行整段吞掉，或者留下永远清不掉的残块。
     case brokenSentinel(reason: String)

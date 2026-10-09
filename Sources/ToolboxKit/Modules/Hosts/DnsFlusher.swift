@@ -25,7 +25,7 @@ public struct ProcessDnsRunner: DnsCommandRunning {
     }
 }
 
-public enum DnsFlushOutcome: Equatable {
+public enum DnsFlushOutcome: Equatable, Sendable {
     case ok
     /// sudoers 没装 / 本机 sudoers 不 include sudoers.d
     case needsProvisioned(String)

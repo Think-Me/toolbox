@@ -2,7 +2,7 @@ import CryptoKit
 import Darwin
 import Foundation
 
-public enum HostsWriterError: Error, Equatable, CustomStringConvertible {
+public enum HostsWriterError: Error, Equatable, Sendable, CustomStringConvertible {
     /// 权限没到位（或被系统升级重置回 root:wheel 644）
     case notProvisioned(path: String, reason: String)
     case readFailed(path: String, reason: String)
