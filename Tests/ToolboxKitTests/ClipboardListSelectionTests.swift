@@ -85,3 +85,27 @@ import Testing
     s.setCount(0)
     #expect(s.current(in: items) == nil)
 }
+
+@Test func quickPickLabelOnlyForMappableRows() {
+    // 序号必须与 ⌘N 的映射严格一致：第 0 行标 "1"，第 8 行标 "9"，
+    // 第 9 行往后**不给标号**——标了就等于暗示存在 ⌘10，而它并不存在。
+    #expect(ClipboardListSelection.quickPickLabel(row: 0) == "1")
+    #expect(ClipboardListSelection.quickPickLabel(row: 4) == "5")
+    #expect(ClipboardListSelection.quickPickLabel(row: 8) == "9")
+    #expect(ClipboardListSelection.quickPickLabel(row: 9) == nil)
+    #expect(ClipboardListSelection.quickPickLabel(row: 120) == nil)
+    #expect(ClipboardListSelection.quickPickLabel(row: -1) == nil)
+}
+
+@Test func quickPickLabelAgreesWithQuickPick() {
+    // 标号 n 对应的行，必须正好是 quickPick(keyCode: n) 返回的行；
+    // 两者一旦不一致，用户按数字就会粘错条目
+    let s = ClipboardListSelection(count: 30)
+    for digit in 1...9 {
+        let keyCode = UInt16(ClipboardListSelection.digitKeyCodes.first {
+            $0.value == digit
+        }!.key)
+        #expect(s.quickPick(keyCode: keyCode) == digit - 1)
+        #expect(ClipboardListSelection.quickPickLabel(row: digit - 1) == "\(digit)")
+    }
+}

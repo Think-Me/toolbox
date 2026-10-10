@@ -55,6 +55,15 @@ public struct ClipboardListSelection: Equatable {
         return target < count ? target : nil
     }
 
+    /// 该行对应的 `⌘数字` 标号；超出 1…9 的行返回 nil。
+    ///
+    /// 界面上必须在行首显示这个标号，否则用户要一个个数字去数才知道按哪个。
+    /// 反过来也不能给第 10 行标 "10" —— 那等于暗示存在 ⌘10，而它不存在。
+    public static func quickPickLabel(row: Int) -> String? {
+        guard (0..<9).contains(row) else { return nil }
+        return "\(row + 1)"
+    }
+
     public func current<T>(in items: [T]) -> T? {
         guard isValid, index < items.count else { return nil }
         return items[index]
