@@ -26,6 +26,12 @@ public final class CaptureFlow {
         overlay.hidePanelsForCapture = { [weak self] in
             self?.pins.hideFloatingPanels() ?? ()
         }
+        overlay.snapEnabledProvider = { [weak self] in
+            self?.settingsProvider().snapSelectionToEdges ?? true
+        }
+        overlay.magnifierEnabledProvider = { [weak self] in
+            self?.settingsProvider().showMagnifier ?? true
+        }
     }
 
     public var isBusy: Bool { overlay.isPresenting }

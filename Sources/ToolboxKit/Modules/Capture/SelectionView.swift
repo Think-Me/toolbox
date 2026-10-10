@@ -29,11 +29,25 @@ public final class SelectionView: NSView {
     }
 
     private let strip = ActionStripView()
+
+    // MARK: M3 交互增强（都可关：有人讨厌吸附，有人嫌放大镜挡视线）
+    /// 本屏 flipped 坐标下的可框选窗口，按"从前到后"
+    public var windowCandidates: [CGRect] = []
+    public var snapEnabled = true
+    public var magnifierEnabled = true
+    /// 冻结帧的像素图：放大镜取景与取色都要用它，不能从 NSImage 反推
+    public private(set) var frozenPixels: CGImage?
+    public var screenScale: CGFloat = 2
+    private var hoverWindow: CGRect?
+    private var cursorPoint: CGPoint?
+    private var tracking: NSTrackingArea?
     private var stripSize: CGSize { strip.idealSize }
 
     public init(screenImage: NSImage, cgImage: CGImage?) {
         self.frozen = screenImage
         self.frozenCGImage = cgImage
+        self.frozenPixels = cgImage
+        self.frozenPixels = cgImage
         super.init(frame: .zero)
         wantsLayer = true
         strip.onAction = { [weak self] kind in self?.stripTapped(kind) }
@@ -82,6 +96,11 @@ public final class SelectionView: NSView {
         ctx.addPath(mask)
         ctx.fillPath(using: CGPathFillRule.evenOdd)
 
+        // 悬停高亮与放大镜要在选区之前画：它们属于"取景辅助"，
+        // 不该被选区边框压住，但也不能挡住选区本身
+        drawHoverHighlight(in: ctx)
+        drawMagnifier(in: ctx)
+
         guard sel.width > 0, sel.height > 0 else { return }
 
         ctx.setStrokeColor(NSColor.white.cgColor)
@@ -90,6 +109,89 @@ public final class SelectionView: NSView {
 
         drawHandles(sel, in: ctx)
         drawSizeLabel(sel)
+    }
+
+    /// idle 时把光标下的窗口用虚线框出来，提示"这一下点下去会框住整个窗口"。
+    func drawHoverHighlight(in ctx: CGContext) {
+        guard state.phase == .idle, let hover = hoverWindow else { return }
+        ctx.saveGState()
+        ctx.setStrokeColor(NSColor.white.cgColor)
+        ctx.setLineWidth(2)
+        ctx.setLineDash(phase: 0, lengths: [6, 4])
+        ctx.stroke(hover.insetBy(dx: 1, dy: 1))
+        ctx.restoreGState()
+    }
+
+    /// 像素级取景 + 中心十字准星 + 光标处 HEX。
+    /// 拖拽中也要显示：用户就是靠它把边线对齐到某个像素的。
+    func drawMagnifier(in ctx: CGContext) {
+        guard magnifierEnabled, let cursor = cursorPoint, let pixels = frozenPixels
+        else { return }
+        let imageSize = CGSize(width: pixels.width, height: pixels.height)
+        let box = Magnifier.frame(cursor: cursor, container: bounds,
+                                  size: CGSize(width: Magnifier.outputSize,
+                                               height: Magnifier.outputSize
+                                                    + Magnifier.labelHeight))
+        let lens = CGRect(x: box.minX, y: box.minY,
+                          width: Magnifier.outputSize, height: Magnifier.outputSize)
+        let src = Magnifier.sourceRect(cursorInScreenPoints: cursor, scale: screenScale,
+                                       imageSize: imageSize)
+        guard src.width > 0, src.height > 0 else { return }
+
+        ctx.saveGState()
+        ctx.setFillColor(NSColor(calibratedWhite: 0.10, alpha: 0.98).cgColor)
+        ctx.fill(box)
+        ctx.setStrokeColor(NSColor(calibratedWhite: 0.55, alpha: 1).cgColor)
+        ctx.setLineWidth(1)
+        ctx.stroke(box)
+        ctx.restoreGState()
+
+        // 把源矩形映射到 lens：靠 CTM 平移+缩放实现。
+        // 直接 ctx.draw(pixels, in: lens) 是错的——那会把整张屏幕压进 120pt。
+        ctx.saveGState()
+        ctx.interpolationQuality = .none
+        ctx.clip(to: lens)
+        ctx.translateBy(x: lens.minX, y: lens.minY)
+        ctx.scaleBy(x: lens.width / src.width, y: lens.height / src.height)
+        ctx.translateBy(x: -src.minX, y: -src.minY)
+        ctx.draw(pixels, in: CGRect(origin: .zero, size: imageSize))
+        ctx.restoreGState()
+
+        // 中心十字准星：标出"这一像素就是要取的颜色"
+        let cross = Magnifier.crosshairOffset
+        let vertical: [CGPoint] = [CGPoint(x: lens.minX + cross, y: lens.minY),
+                                   CGPoint(x: lens.minX + cross, y: lens.maxY)]
+        let horizontal: [CGPoint] = [CGPoint(x: lens.minX, y: lens.minY + cross),
+                                     CGPoint(x: lens.maxX, y: lens.minY + cross)]
+        ctx.saveGState()
+        ctx.setStrokeColor(NSColor.systemRed.withAlphaComponent(0.85).cgColor)
+        ctx.setLineWidth(1)
+        // CGContext 没有 strokeLines，画线段要用 strokeLineSegments(between: [CGPoint])
+        ctx.strokeLineSegments(between: vertical)
+        ctx.strokeLineSegments(between: horizontal)
+        ctx.restoreGState()
+
+        let hex = Magnifier.hexColor(of: pixels,
+                                     pixelX: Int((cursor.x * screenScale).rounded()),
+                                     pixelY: Int((cursor.y * screenScale).rounded()))
+        drawMagnifierInfo(hex: hex,
+                          in: CGRect(x: box.minX, y: lens.maxY,
+                                     width: box.width, height: Magnifier.labelHeight))
+    }
+
+    private func drawMagnifierInfo(hex: String?, in rect: CGRect) {
+        guard let hex else { return }
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
+            .foregroundColor: NSColor.white,
+        ]
+        (hex as NSString).draw(at: CGPoint(x: rect.minX + 6, y: rect.midY - 6),
+                               withAttributes: attrs)
+        if let color = NSColor(hexString: hex) {
+            color.setFill()
+            NSBezierPath(rect: CGRect(x: rect.maxX - 26, y: rect.midY - 7,
+                                      width: 20, height: 14)).fill()
+        }
     }
 
     private func drawHandles(_ sel: CGRect, in ctx: CGContext) {
@@ -125,7 +227,12 @@ public final class SelectionView: NSView {
     // MARK: 鼠标
 
     override public func mouseDown(with event: NSEvent) {
-        reduce(.mouseDown(convert(event)))
+        let p = convert(event.locationInWindow, from: nil)
+        let hover = state.phase == .idle
+            ? (hoverWindow ?? SelectionSnapping.topmostWindow(containing: p, in: windowCandidates))
+            : nil
+        // 整窗选中与否交给 reducer：它要看"按下后有没有拖动"
+        reduce(.mouseDown(p, hover: hover))
     }
 
     override public func mouseDragged(with event: NSEvent) {
@@ -142,15 +249,48 @@ public final class SelectionView: NSView {
         convert(event.locationInWindow, from: nil)
     }
 
+    private var snapTargets: SnapTargets? {
+        guard snapEnabled else { return nil }
+        return SelectionSnapping.targets(windows: windowCandidates, screen: bounds)
+    }
+
     private func reduce(_ action: SelectionAction) {
         logEvent("reduce \(action) → phase=\(String(describing: state.phase)) rect=\(String(describing: state.rect))")
-        state = SelectionReducer.reduce(state, action, bounds: bounds)
+        state = SelectionReducer.reduce(state, action, bounds: bounds, snap: snapTargets)
         logEvent("  结果 phase=\(String(describing: state.phase)) canCommit=\(state.canCommit) exit=\(state.exitRequested)")
         updateStripVisibility()
         if state.exitRequested { onCommit?(.cancel) }
     }
 
     // MARK: 键盘
+
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: .zero,
+                                  options: [.mouseMoved, .mouseEnteredAndExited,
+                                            .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    public override func mouseMoved(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        cursorPoint = p
+        guard phaseAllowsHoverHighlight else { hoverWindow = nil; needsDisplay = true; return }
+        let next = SelectionSnapping.topmostWindow(containing: p, in: windowCandidates)
+        if next != hoverWindow { hoverWindow = next }
+        needsDisplay = true      // 放大镜要跟着光标走，每帧都得重绘
+    }
+
+    public override func mouseExited(with event: NSEvent) {
+        hoverWindow = nil
+        cursorPoint = nil
+        needsDisplay = true
+    }
+
+    private var phaseAllowsHoverHighlight: Bool { state.phase == .idle }
 
     override public func keyDown(with event: NSEvent) {
         logEvent("keyDown code=\(event.keyCode)")

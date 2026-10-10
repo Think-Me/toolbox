@@ -45,6 +45,12 @@ public final class SelectionOverlayController {
 
     public init() {}
 
+    /// 由 CaptureFlow 注入：吸附/放大镜开关 + 窗口枚举来源。
+    /// 用闭包而不是直接读设置单例，遮罩层就不绑死在 AppSettings 上。
+    public var snapEnabledProvider: () -> Bool = { true }
+    public var magnifierEnabledProvider: () -> Bool = { true }
+    public var windowProvider: any WindowCandidateProviding = CGWindowCandidateProvider()
+
     public var isPresenting: Bool { window != nil }
 
     public func present() {
@@ -59,6 +65,28 @@ public final class SelectionOverlayController {
                                     size: NSSize(width: frame.screenFrameInPoints.width,
                                                  height: frame.screenFrameInPoints.height))
                 let v = SelectionView(screenImage: image, cgImage: frame.image)
+                v.screenScale = frame.scale
+                v.snapEnabled = snapEnabledProvider()
+                v.magnifierEnabled = magnifierEnabledProvider()
+                // 窗口列表要在遮罩出现之后再取：provider 按 pid 排除自己，
+                // 所以拿到的是用户真正能框的那些窗口。
+                // 不需要再去找 NSScreen 对象——CapturedFrame 已经带了该屏的 AppKit frame。
+                let primaryHeight = NSScreen.screens.first?.frame.height
+                    ?? frame.screenFrameInPoints.height
+                if let geometry = ScreenGeometry(appKitFrame: frame.screenFrameInPoints,
+                                                 primaryHeight: primaryHeight) {
+                    v.windowCandidates = windowProvider.candidates(
+                        for: geometry,
+                        excluding: ProcessInfo.processInfo.processIdentifier)
+                    if CommandLine.arguments.contains("--overlay-eventlog") {
+                        let summary = v.windowCandidates.prefix(6)
+                            .map { "\($0.origin.x),\($0.origin.y) \($0.width)x\($0.height)" }
+                            .joined(separator: " | ")
+                        FileHandle.standardError.write(
+                            "CANDIDATES \(v.windowCandidates.count) \(summary)\n"
+                                .data(using: .utf8)!)
+                    }
+                }
                 let w = OverlayWindow(contentRect: frame.screenFrameInPoints,
                                       styleMask: [.borderless],
                                       backing: .buffered, defer: false)

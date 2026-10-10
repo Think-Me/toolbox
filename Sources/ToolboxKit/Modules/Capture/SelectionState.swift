@@ -22,6 +22,10 @@ public struct SelectionState: Equatable {
     public var dragStart: CGPoint?
     public var activeHandle: Handle?
     public var exitRequested = false
+    /// 按下时光标下的窗口。拖拽位移超过 `dragToFreeThreshold` 就放弃它，
+    /// 改为自由矩形——这就是 Snipaste "单击整窗、拖动自由框"的区分方式。
+    public var pendingWindow: CGRect?
+    public static let dragToFreeThreshold: CGFloat = 4
 
     public init() {}
 
@@ -32,7 +36,11 @@ public struct SelectionState: Equatable {
 }
 
 public enum SelectionAction: Equatable {
-    case mouseDown(CGPoint)
+    /// 按下。`hover` 是光标下那个可整选的窗口（idle 时才有意义）。
+    /// 不能一按下就整窗选中：那样用户就没法从窗口内部起笔框自由矩形了。
+    case mouseDown(CGPoint, hover: CGRect? = nil)
+    /// 明确整窗选中（用于键盘/程序触发）
+    case selectWindow(CGRect)
     case mouseDragged(CGPoint)
     case mouseUp
     case escape
@@ -45,12 +53,22 @@ public enum SelectionAction: Equatable {
 public enum SelectionReducer {
     public static let handleTolerance: CGFloat = 6
 
+    /// `snap` 非空时对拖拽结果做边缘吸附。
+    /// 只在拖拽/缩放时生效：方向键微调是像素级操作，吸附会和它打架。
     public static func reduce(_ state: SelectionState, _ action: SelectionAction,
-                              bounds: CGRect) -> SelectionState {
+                              bounds: CGRect, snap: SnapTargets? = nil) -> SelectionState {
         var s = state
         switch action {
-        case .mouseDown(let p):
-            handleDown(&s, at: p, bounds: bounds)
+        case .selectWindow(let window):
+            let clipped = window.intersection(bounds)
+            guard !clipped.isNull, clipped.width >= 1, clipped.height >= 1 else { return s }
+            s.phase = .hasSelection
+            s.rect = clipped
+            s.dragStart = nil
+            s.activeHandle = nil
+
+        case .mouseDown(let p, let hover):
+            handleDown(&s, at: p, hover: hover, bounds: bounds)
 
         case .mouseDragged(let p):
             switch s.phase {
@@ -58,10 +76,21 @@ public enum SelectionReducer {
                 break
             case .dragging:
                 guard let start = s.dragStart else { return s }
-                s.rect = SelectionGeometry.normalize(from: start, to: p, in: bounds)
+                // 按下时带了候选窗口，但位移很小 → 保持整窗（"单击整窗"）
+                if let pending = s.pendingWindow,
+                   hypot(p.x - start.x, p.y - start.y) < SelectionState.dragToFreeThreshold {
+                    s.rect = pending
+                    break
+                }
+                // 位移够大 → 放弃整窗，改自由矩形（否则用户根本框不了局部区域）
+                s.pendingWindow = nil
+                var r = SelectionGeometry.normalize(from: start, to: p, in: bounds)
+                if let snap { r = SelectionSnapping.snap(r, to: snap).rect }
+                s.rect = r
             case .hasSelection, .resizing:
                 guard let start = s.dragStart, var r = s.rect, let h = s.activeHandle else { return s }
                 r = resize(r, handle: h, from: start, to: p, bounds: bounds)
+                if let snap { r = SelectionSnapping.snap(r, to: snap).rect }
                 s.rect = r
                 s.phase = .resizing
             }
@@ -71,6 +100,7 @@ public enum SelectionReducer {
                 s.phase = .hasSelection
                 s.activeHandle = nil
                 s.dragStart = nil
+                s.pendingWindow = nil
             } else if s.phase == .resizing {
                 s.phase = .hasSelection
                 s.activeHandle = nil
@@ -111,7 +141,8 @@ public enum SelectionReducer {
 
     // MARK: 按下
 
-    static func handleDown(_ s: inout SelectionState, at p: CGPoint, bounds: CGRect) {
+    static func handleDown(_ s: inout SelectionState, at p: CGPoint,
+                           hover: CGRect?, bounds: CGRect) {
         if s.phase == .hasSelection, let r = s.rect {
             let h = handle(at: p, in: r, tolerance: handleTolerance)
             switch h {
@@ -134,8 +165,11 @@ public enum SelectionReducer {
         }
         s.phase = .dragging
         s.dragStart = p
-        s.rect = SelectionGeometry.normalize(from: p, to: p, in: bounds)
         s.activeHandle = nil
+        s.pendingWindow = hover
+        // 预览整窗：按下瞬间就能看到"这一下会框住哪个窗口"，
+        // 但只有不拖动才最终生效
+        s.rect = hover ?? SelectionGeometry.normalize(from: p, to: p, in: bounds)
     }
 
     // MARK: 命中判定

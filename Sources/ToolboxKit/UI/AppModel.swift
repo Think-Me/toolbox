@@ -211,6 +211,16 @@ public final class AppModel: ObservableObject {
         persist()
     }
 
+    public func setSnapSelectionToEdges(_ on: Bool) {
+        settings.snapSelectionToEdges = on
+        persist()
+    }
+
+    public func setShowMagnifier(_ on: Bool) {
+        settings.showMagnifier = on
+        persist()
+    }
+
     public func setPinsParticipateInCapture(_ on: Bool) {
         settings.pinsParticipateInCapture = on
         persist()

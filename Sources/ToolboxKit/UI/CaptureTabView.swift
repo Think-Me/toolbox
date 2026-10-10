@@ -29,6 +29,13 @@ struct CaptureTabView: View {
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            Toggle("选区边缘吸附到窗口与屏幕边界", isOn: Binding(
+                get: { model.settings.snapSelectionToEdges },
+                set: { model.setSnapSelectionToEdges($0) }))
+            Toggle("截图时显示像素放大镜与取色", isOn: Binding(
+                get: { model.settings.showMagnifier },
+                set: { model.setShowMagnifier($0) }))
+
             Divider()
             VStack(alignment: .leading, spacing: 4) {
                 Text("贴图快捷键").font(.system(size: 11, weight: .semibold))
