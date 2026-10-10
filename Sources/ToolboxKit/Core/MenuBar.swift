@@ -36,17 +36,22 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
     public func install() -> Bool {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         guard let button = item.button else { return false }
-        let symbol = NSImage(systemSymbolName: "square.stack.3d.up",
-                             accessibilityDescription: "Toolbox")
-        // SF Symbol 取不到时返回 nil；只设 image 不设 title 的话，
-        // 状态项会"安装成功但一个像素都不画"，且没有任何报错。
-        if let symbol {
-            symbol.isTemplate = true
-            button.image = symbol
+        // 优先用打包进去的模板图（取景框+图钉）。必须是 isTemplate：
+        // 模板图才会被系统按菜单栏深浅色染色，当成彩色图放上去就是糊成一团。
+        let icon = Self.statusItemImage()
+        if let icon {
+            icon.isTemplate = true
+            button.image = icon
         } else {
-            button.title = "TBX"
+            // 兜底：资源缺失时退回 SF Symbol，再不行用文字。
+            // 只设 image 不设 title 的话，状态项会"安装成功但一个像素都不画"且无报错。
+            let symbol = NSImage(systemSymbolName: "viewfinder",
+                                 accessibilityDescription: "Toolbox")
+            symbol?.isTemplate = true
+            button.image = symbol
+            if symbol == nil { button.title = "TBX" }
         }
-        lastSymbolResolved = symbol != nil
+        lastSymbolResolved = icon != nil || button.image != nil
         let menu = NSMenu()
         menu.delegate = self
         menu.autoenablesItems = false
@@ -116,6 +121,20 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         let menu = item.menu ?? NSMenu()
         menuNeedsUpdate(menu)
         menu.popUp(positioning: nil, at: screenPoint, in: nil)
+    }
+
+    /// 从 bundle 里取状态栏模板图。
+    /// 按 22pt 设定尺寸：PNG 本身是 88px(@4x)，不设 size 会按像素当点用，
+    /// 图标就会大到撑破菜单栏。
+    static func statusItemImage() -> NSImage? {
+        for bundle in [Bundle.main, Bundle(for: MenuBarController.self)] {
+            if let url = bundle.url(forResource: "MenuBarIcon", withExtension: "png"),
+               let image = NSImage(contentsOf: url) {
+                image.size = NSSize(width: 22, height: 22)
+                return image
+            }
+        }
+        return nil
     }
 
     public func remove() {

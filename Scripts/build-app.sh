@@ -20,6 +20,15 @@ cp "$BIN" "$APP/Contents/MacOS/Toolbox"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
+# 图标资源。缺失时不阻断构建，代码里有 SF Symbol 兜底。
+for f in AppIcon.icns MenuBarIcon.png; do
+    if [ -f "Resources/$f" ]; then
+        cp "Resources/$f" "$APP/Contents/Resources/$f"
+    else
+        echo "⚠️ 缺少 Resources/$f，先跑 ./Scripts/gen-icon-assets.py" >&2
+    fi
+done
+
 # 不要加 --options runtime（hardened runtime）：本地签名 + hardened 会让
 # AppleEvents / 辅助功能类调用因为缺 entitlement 而失败。
 #

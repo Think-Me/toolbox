@@ -6,3 +6,6 @@ Build/
 xcuserdata/
 derivedData/
 *.app/
+
+# 可由 Scripts/gen-icon-assets.py 重新生成
+Resources/AppIcon.iconset/
