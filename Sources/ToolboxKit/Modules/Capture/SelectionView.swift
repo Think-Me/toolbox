@@ -20,7 +20,11 @@ public final class SelectionView: NSView {
     private let frozen: NSImage
     private let frozenCGImage: CGImage?
     private(set) public var state = SelectionState() {
-        didSet { needsDisplay = true; positionStrip() }
+        // 顺序要紧：**先算可见性再定位**。
+        // 之前是 didSet 里定位、reduce 里再改可见性，于是"第一次显示"那一趟
+        // 定位读到的是旧的 isHidden，把工具条算成零宽，而之后没有新的状态变化
+        // 去纠正 —— 表现就是"选完区后新增的按钮没了"。
+        didSet { needsDisplay = true; updateStripVisibility(); positionStrip() }
     }
     public var onCommit: ((CaptureCommit) -> Void)?
 
@@ -303,7 +307,6 @@ public final class SelectionView: NSView {
         logEvent("reduce \(action) → phase=\(String(describing: state.phase)) rect=\(String(describing: state.rect))")
         state = SelectionReducer.reduce(state, action, bounds: bounds, snap: snapTargets)
         logEvent("  结果 phase=\(String(describing: state.phase)) canCommit=\(state.canCommit) exit=\(state.exitRequested)")
-        updateStripVisibility()
         if state.exitRequested { onCommit?(.cancel) }
     }
 
@@ -490,8 +493,8 @@ public final class SelectionView: NSView {
         // 没有选区时**只靠 isHidden 控制可见性**，别把 frame 清成 .zero：
         // 曾经这么写过，配合"idealSize 读 frame.size"就把按钮宽度永久归零了
         guard let sel = state.rect else { return }
-        // 工具条被设置关掉时不能还占着行宽，否则操作条会偏离选区中线
-        let barWidth: CGFloat = toolbar.isHidden ? 0 : toolbar.idealSize.width
+        // 用设置值而不是 toolbar.isHidden：布局不该依赖"这一趟有没有正好更新过可见性"
+        let barWidth: CGFloat = annotationDefaults.toolbarEnabled ? toolbar.idealSize.width : 0
         let row = CaptureToolbarLayout.layout(annotationWidth: barWidth,
                                               actionWidth: stripSize.width,
                                               selection: sel, container: bounds)

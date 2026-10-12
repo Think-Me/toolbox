@@ -37,6 +37,9 @@ public final class CaptureFlow {
         overlay.magnifierEnabledProvider = { [weak self] in
             self?.settingsProvider().showMagnifier ?? true
         }
+        overlay.annotationDefaultsProvider = { [weak self] in
+            AnnotationDefaults(settings: self?.settingsProvider() ?? .default)
+        }
     }
 
     public var isBusy: Bool { overlay.isPresenting }
