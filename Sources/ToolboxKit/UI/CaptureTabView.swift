@@ -37,6 +37,34 @@ struct CaptureTabView: View {
                 set: { model.setShowMagnifier($0) }))
 
             Divider()
+            Text("标注").font(.system(size: 11, weight: .semibold))
+            Toggle("截图选区下方显示标注工具条", isOn: Binding(
+                get: { model.settings.annotationToolbarEnabled },
+                set: { model.setAnnotationToolbarEnabled($0) }))
+            if model.settings.annotationToolbarEnabled {
+                HStack(spacing: 10) {
+                    Picker("默认颜色", selection: Binding(
+                        get: { model.settings.annotationDefaultColorHex },
+                        set: { model.setAnnotationDefaultColorHex($0) })) {
+                        ForEach(Array(AnnotationPalette.colors.enumerated()), id: \.offset) { i, c in
+                            Text(AnnotationPalette.colorNames[i]).tag(c.hexString)
+                        }
+                    }
+                    .fixedSize()
+                    Picker("默认线宽", selection: Binding(
+                        get: { model.settings.annotationDefaultLineWidth },
+                        set: { model.setAnnotationDefaultLineWidth($0) })) {
+                        ForEach(AnnotationPalette.lineWidths, id: \.self) { w in
+                            Text("\(Int(w)) px").tag(Double(w))
+                        }
+                    }
+                    .fixedSize()
+                }
+                Text("画完还能在工具条上随时改颜色和粗细，这里只决定初始值。")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+
+            Divider()
             VStack(alignment: .leading, spacing: 4) {
                 Text("贴图快捷键").font(.system(size: 11, weight: .semibold))
                 Text("拖动移动 · 双指上下滑/捏合缩放 · 双击关闭 · R 旋转 · X 鼠标穿透 · ⌘0 原始大小 · ⌥+滚动 透明度 · F3 收回全部")

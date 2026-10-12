@@ -120,3 +120,31 @@ import Testing
     #expect(AnnotationColor(red: 1, green: 0, blue: 0, opacity: 1).hexString == "#FF0000")
     #expect(AnnotationColor(red: 0, green: 0, blue: 0, opacity: 1).hexString == "#000000")
 }
+
+// MARK: 设置值 → 调色板
+
+@Test func nearestColorMatchesPaletteByHex() {
+    for c in AnnotationPalette.colors {
+        #expect(AnnotationPalette.nearestColor(hex: c.hexString) == c)
+    }
+}
+
+@Test func nearestColorFallsBackForGarbageOrMissing() {
+    // 用户手改过 settings.json、或调色板换过版本时，
+    // 不能出现"工具条里没有任何颜色被选中"的状态
+    #expect(AnnotationPalette.nearestColor(hex: "#123456") == AnnotationPalette.defaultColor)
+    #expect(AnnotationPalette.nearestColor(hex: "") == AnnotationPalette.defaultColor)
+    #expect(AnnotationPalette.nearestColor(hex: "red") == AnnotationPalette.defaultColor)
+}
+
+@Test func nearestLineWidthSnapsToStridedValues() {
+    #expect(AnnotationPalette.nearestLineWidth(5) == 4)
+    #expect(AnnotationPalette.nearestLineWidth(7) == 8)
+    #expect(AnnotationPalette.nearestLineWidth(2) == 2)
+    #expect(AnnotationPalette.nearestLineWidth(0) == 2)     // 0 会让线画不出来
+    #expect(AnnotationPalette.nearestLineWidth(999) == 8)
+}
+
+@Test func paletteColorNamesAlignWithColors() {
+    #expect(AnnotationPalette.colorNames.count == AnnotationPalette.colors.count)
+}

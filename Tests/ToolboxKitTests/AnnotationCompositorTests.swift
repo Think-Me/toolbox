@@ -164,3 +164,49 @@ private func blueRect(from: CGPoint, to: CGPoint) -> Annotation {
     #expect(x == 46 && y == 46)
     #expect(hex(out, x, y) == expected)
 }
+
+// MARK: 导出分支决定
+
+@Test func exportWithoutAnnotationsMatchesLegacyPath() {
+    let frozen = markedImage(400)
+    let px = CGRect(x: 100, y: 100, width: 200, height: 150)
+    let legacy = ImageCodec.png(ImageCodec.crop(frozen, pixelRect: px)!)
+    let out = AnnotationCompositor.exportPNG(frozen: frozen, pixelRect: px, annotations: [],
+                                             scale: 1, selectionOrigin: CGPoint(x: 100, y: 100))!
+    #expect(out.data == legacy)
+    #expect(out.pixelSize == CGSize(width: 200, height: 150))
+}
+
+@Test func exportWithAnnotationsChangesBytesButNotSize() {
+    let frozen = markedImage(400)
+    let px = CGRect(x: 100, y: 100, width: 200, height: 150)
+    let plain = AnnotationCompositor.exportPNG(frozen: frozen, pixelRect: px, annotations: [],
+                                               scale: 1, selectionOrigin: CGPoint(x: 100, y: 100))!
+    let a = blueRect(from: CGPoint(x: 110, y: 110), to: CGPoint(x: 160, y: 140))
+    let out = AnnotationCompositor.exportPNG(frozen: frozen, pixelRect: px, annotations: [a],
+                                             scale: 1, selectionOrigin: CGPoint(x: 100, y: 100))!
+    #expect(out.data != plain.data)
+    #expect(out.pixelSize == plain.pixelSize)   // 标注绝不能改变输出尺寸
+}
+
+@Test func exportKeepsRetinaPixelSize() {
+    // Retina 上带标注的输出必须是**原生像素**尺寸，
+    // 一旦被当成 point 处理就会小一半
+    let frozen = markedImage(800)
+    let px = CGRect(x: 200, y: 200, width: 400, height: 300)
+    let a = blueRect(from: CGPoint(x: 110, y: 110), to: CGPoint(x: 140, y: 130))
+    let out = AnnotationCompositor.exportPNG(frozen: frozen, pixelRect: px, annotations: [a],
+                                             scale: 2, selectionOrigin: CGPoint(x: 100, y: 100))!
+    #expect(out.pixelSize == CGSize(width: 400, height: 300))
+}
+
+@Test func exportWithOnlyIncompleteAnnotationsUsesLegacyPath() {
+    let frozen = markedImage(400)
+    let px = CGRect(x: 0, y: 0, width: 400, height: 400)
+    let legacy = ImageCodec.png(ImageCodec.crop(frozen, pixelRect: px)!)
+    let half = Annotation(tool: .pen, points: [CGPoint(x: 5, y: 5)],
+                          color: .pureRed, lineWidth: 2)
+    let out = AnnotationCompositor.exportPNG(frozen: frozen, pixelRect: px, annotations: [half],
+                                             scale: 1, selectionOrigin: .zero)!
+    #expect(out.data == legacy)
+}

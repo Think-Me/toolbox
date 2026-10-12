@@ -49,6 +49,7 @@ public final class SelectionOverlayController {
     /// 用闭包而不是直接读设置单例，遮罩层就不绑死在 AppSettings 上。
     public var snapEnabledProvider: () -> Bool = { true }
     public var magnifierEnabledProvider: () -> Bool = { true }
+    public var annotationDefaultsProvider: () -> AnnotationDefaults = { .standard }
     public var windowProvider: any WindowCandidateProviding = CGWindowCandidateProvider()
 
     /// 调试探针用：遮罩视图建好之后回调一次（自动化环境里没法用鼠标键盘操作遮罩）
@@ -71,6 +72,7 @@ public final class SelectionOverlayController {
                 v.screenScale = frame.scale
                 v.snapEnabled = snapEnabledProvider()
                 v.magnifierEnabled = magnifierEnabledProvider()
+                v.applyAnnotationDefaults(annotationDefaultsProvider())
                 // 窗口列表要在遮罩出现之后再取：provider 按 pid 排除自己，
                 // 所以拿到的是用户真正能框的那些窗口。
                 // 不需要再去找 NSScreen 对象——CapturedFrame 已经带了该屏的 AppKit frame。
@@ -141,8 +143,8 @@ public final class SelectionOverlayController {
         case .reshot:
             dismiss()
             present()
-        case .pin(let sel), .copy(let sel), .save(let sel):
-            guard let result = crop(selection: sel) else {
+        case .pin(let sel, let anns), .copy(let sel, let anns), .save(let sel, let anns):
+            guard let result = crop(selection: sel, annotations: anns) else {
                 finish(.failed("裁剪失败：选区超出画面范围"))
                 return
             }
@@ -157,13 +159,15 @@ public final class SelectionOverlayController {
         cb?(outcome)
     }
 
-    private func crop(selection: CGRect) -> Result? {
+    private func crop(selection: CGRect, annotations: [Annotation] = []) -> Result? {
         guard let frame else { return nil }
         let px = SelectionGeometry.flippedRectToPixels(selection, scale: frame.scale)
-        guard let cropped = ImageCodec.crop(frame.image, pixelRect: px),
-              let png = ImageCodec.png(cropped) else { return nil }
-        return Result(pngData: png,
-                      pixelSize: CGSize(width: cropped.width, height: cropped.height),
+        // 没标注时走原来的纯裁剪路径，一字节都不差（exportPNG 内部就是这么分支的）
+        guard let out = AnnotationCompositor.exportPNG(
+            frozen: frame.image, pixelRect: px, annotations: annotations,
+            scale: frame.scale, selectionOrigin: selection.origin) else { return nil }
+        return Result(pngData: out.data,
+                      pixelSize: out.pixelSize,
                       selectionInScreenPoints: selection,
                       screenFrameInPoints: frame.screenFrameInPoints,
                       scale: frame.scale)

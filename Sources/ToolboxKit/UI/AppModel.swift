@@ -221,6 +221,22 @@ public final class AppModel: ObservableObject {
         persist()
     }
 
+    public func setAnnotationToolbarEnabled(_ on: Bool) {
+        settings.annotationToolbarEnabled = on
+        persist()
+    }
+
+    public func setAnnotationDefaultColorHex(_ hex: String) {
+        // 一律吸附到调色板里的颜色再存：存进去的值必须能被工具条原样显示出来
+        settings.annotationDefaultColorHex = AnnotationPalette.nearestColor(hex: hex).hexString
+        persist()
+    }
+
+    public func setAnnotationDefaultLineWidth(_ w: Double) {
+        settings.annotationDefaultLineWidth = Double(AnnotationPalette.nearestLineWidth(w))
+        persist()
+    }
+
     public func setClipboardVisibleRows(_ n: Int) {
         settings.clipboardVisibleRows = ClipboardPanelGeometry.clampedRows(n)
         persist()

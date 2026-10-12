@@ -39,3 +39,24 @@ public enum AnnotationCompositor {
         return ctx.makeImage() ?? base
     }
 }
+
+extension AnnotationCompositor {
+    /// 一次导出：返回 PNG 数据与像素尺寸。
+    ///
+    /// 单独抽出来，是为了把"没标注就走原路径、有标注才合成"这个**分支决定**
+    /// 变成可测的东西 —— 它写在 SelectionOverlayController 里就只能在真截图时验证。
+    public static func exportPNG(frozen: CGImage, pixelRect: CGRect,
+                                 annotations: [Annotation], scale: CGFloat,
+                                 selectionOrigin: CGPoint)
+        -> (data: Data, pixelSize: CGSize)? {
+        let image: CGImage?
+        if annotations.filter(\.isComplete).isEmpty {
+            image = ImageCodec.crop(frozen, pixelRect: pixelRect)
+        } else {
+            image = compose(frozen: frozen, pixelRect: pixelRect, annotations: annotations,
+                            scale: scale, selectionOrigin: selectionOrigin)
+        }
+        guard let image, let png = ImageCodec.png(image) else { return nil }
+        return (png, CGSize(width: image.width, height: image.height))
+    }
+}

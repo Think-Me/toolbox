@@ -123,6 +123,10 @@ public enum AnnotationPalette {
         AnnotationColor(red: 0.110, green: 0.110, blue: 0.118),  // #1C1C1E 近黑
     ]
 
+    /// 和 colors 一一对应，供设置页显示。
+    /// 有测试钉住两者数量必须相等 —— 加了颜色忘了加名字，Picker 就会错位。
+    public static let colorNames = ["红", "黄", "绿", "蓝", "白", "黑"]
+
     public static let lineWidths: [CGFloat] = [2, 4, 8]
 
     public static let defaultColor = colors[0]
@@ -130,7 +134,46 @@ public enum AnnotationPalette {
     public static let defaultFontSize: CGFloat = 18
     public static let fontSizes: [CGFloat] = [14, 18, 26]
 
+    /// 设置里存的 hex → 调色板里的颜色。
+    /// 用户手改过 settings.json、或调色板换过版本时，
+    /// 必须落到一个**工具条上真实存在**的颜色，否则会出现"没有任何圆点被选中"。
+    public static func nearestColor(hex: String) -> AnnotationColor {
+        colors.first { $0.hexString.caseInsensitiveCompare(hex) == .orderedSame }
+            ?? defaultColor
+    }
+
+    /// 设置里存的任意数值 → 三档线宽里最近的一档
+    public static func nearestLineWidth(_ raw: Double) -> CGFloat {
+        let v = CGFloat(raw)
+        return lineWidths.min(by: { abs($0 - v) < abs($1 - v) }) ?? defaultLineWidth
+    }
+
     /// 马赛克格子边长（point）。再小就接近"模糊"而不是马赛克，
     /// 且分格数随面积平方增长，大选区会拖慢合成。
     public static let mosaicCellPoints: CGFloat = 12
+}
+
+
+/// 截图标注的默认值（来自设置页）。
+/// 打包成一个结构而不是三个 provider 闭包：它们永远一起用。
+public struct AnnotationDefaults: Equatable, Sendable {
+    public var toolbarEnabled: Bool
+    public var color: AnnotationColor
+    public var lineWidth: CGFloat
+
+    public init(toolbarEnabled: Bool = true,
+                color: AnnotationColor = AnnotationPalette.defaultColor,
+                lineWidth: CGFloat = AnnotationPalette.defaultLineWidth) {
+        self.toolbarEnabled = toolbarEnabled
+        self.color = color
+        self.lineWidth = lineWidth
+    }
+
+    public static let standard = AnnotationDefaults()
+
+    public init(settings: AppSettings) {
+        self.toolbarEnabled = settings.annotationToolbarEnabled
+        self.color = settings.annotationDefaultColor
+        self.lineWidth = settings.annotationDefaultLineW
+    }
 }

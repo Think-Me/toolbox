@@ -2,9 +2,11 @@ import AppKit
 import Carbon.HIToolbox
 
 public enum CaptureCommit: Equatable, Sendable {
-    case pin(CGRect)        // 选区（遮罩视图坐标，左上原点）
-    case copy(CGRect)
-    case save(CGRect)
+    /// 选区（遮罩视图坐标，左上原点）+ 该选区上的标注。
+    /// 标注必须跟着一起交出去：复制/钉图/存盘三条出口都要用同一份合成结果。
+    case pin(CGRect, [Annotation])
+    case copy(CGRect, [Annotation])
+    case save(CGRect, [Annotation])
     case cancel
     case reshot
 }
@@ -32,6 +34,7 @@ public final class SelectionView: NSView {
     private let toolbar = AnnotationToolbarView()
     /// 文字工具的内联编辑器。nil = 没在编辑
     private var textEditor: NSTextField?
+    private var annotationDefaults = AnnotationDefaults.standard
     /// 编辑器在场时要挂起的热键
     private static let suspendedWhileTyping: [HotkeyID] = HotkeyID.allCases
     /// 工具条与操作条之间（以及两块面板各自内部）的缝隙
@@ -411,6 +414,15 @@ public final class SelectionView: NSView {
         needsDisplay = true
     }
 
+    /// 应用设置页里的标注默认值。工具条关掉时整行只剩操作条。
+    public func applyAnnotationDefaults(_ d: AnnotationDefaults) {
+        annotationDefaults = d
+        state.annotation.color = d.color
+        state.annotation.lineWidth = d.lineWidth
+        updateStripVisibility()
+        positionStrip()
+    }
+
     // MARK: 操作条
 
     private func stripTapped(_ kind: ActionStripView.Kind) {
@@ -426,19 +438,9 @@ public final class SelectionView: NSView {
     private func commit(_ kind: ActionStripView.Kind) {
         guard state.canCommit, let sel = state.rect else { return }
         switch kind {
-        case .copy: onCommit?(.copy(sel))
-        case .pin: onCommit?(.pin(sel))
-        case .save: onCommit?(.save(sel))
-        default: break
-        }
-    }
-
-    private func commit(_ kind: CaptureCommit) {
-        guard state.canCommit, let sel = state.rect else { return }
-        switch kind {
-        case .pin: onCommit?(.pin(sel))
-        case .copy: onCommit?(.copy(sel))
-        case .save: onCommit?(.save(sel))
+        case .copy: onCommit?(.copy(sel, state.annotation.annotations))
+        case .pin: onCommit?(.pin(sel, state.annotation.annotations))
+        case .save: onCommit?(.save(sel, state.annotation.annotations))
         default: break
         }
     }
@@ -446,7 +448,7 @@ public final class SelectionView: NSView {
     private func updateStripVisibility() {
         let show = state.canCommit
         strip.isHidden = !show
-        toolbar.isHidden = !show
+        toolbar.isHidden = !show || !annotationDefaults.toolbarEnabled
         if show {
             toolbar.update(selectedTool: state.annotation.tool,
                            color: state.annotation.color,
@@ -490,7 +492,9 @@ public final class SelectionView: NSView {
             toolbar.frame = .zero
             return
         }
-        let row = CaptureToolbarLayout.layout(annotationWidth: toolbar.idealSize.width,
+        // 工具条被设置关掉时不能还占着行宽，否则操作条会偏离选区中线
+        let barWidth: CGFloat = toolbar.isHidden ? 0 : toolbar.idealSize.width
+        let row = CaptureToolbarLayout.layout(annotationWidth: barWidth,
                                               actionWidth: stripSize.width,
                                               selection: sel, container: bounds)
         toolbar.frame = row.annotationBar
