@@ -62,12 +62,17 @@ public final class AnnotationToolbarView: NSView {
         x = placeHistory(from: x)
         x += Self.edge
 
+        intrinsicWidth = x
         frame.size = CGSize(width: x, height: Self.h)
     }
 
+    /// 同 ActionStripView：固有宽度不能从 frame.size 反推，见那边的注释。
+    /// 用 var 是 Swift 的定值初始化规则：init 里调了实例方法之后再给 let 赋值会报错
+    private var intrinsicWidth: CGFloat = 0
+
     required init?(coder: NSCoder) { fatalError("不支持从 nib 构造") }
 
-    public var idealSize: CGSize { frame.size }
+    public var idealSize: CGSize { CGSize(width: intrinsicWidth, height: Self.h) }
 
     // MARK: 排布
 

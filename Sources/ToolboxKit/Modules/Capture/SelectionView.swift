@@ -487,11 +487,9 @@ public final class SelectionView: NSView {
     }
 
     private func positionStrip() {
-        guard let sel = state.rect else {
-            strip.frame = .zero
-            toolbar.frame = .zero
-            return
-        }
+        // 没有选区时**只靠 isHidden 控制可见性**，别把 frame 清成 .zero：
+        // 曾经这么写过，配合"idealSize 读 frame.size"就把按钮宽度永久归零了
+        guard let sel = state.rect else { return }
         // 工具条被设置关掉时不能还占着行宽，否则操作条会偏离选区中线
         let barWidth: CGFloat = toolbar.isHidden ? 0 : toolbar.idealSize.width
         let row = CaptureToolbarLayout.layout(annotationWidth: barWidth,
@@ -558,16 +556,22 @@ public final class ActionStripView: NSView {
             addSubview(b)
         }
         let count = CGFloat(Kind.allCases.count)
-        frame.size = CGSize(width: count * Self.buttonWidth + Self.edgeInset * 2,
-                            height: Self.defaultHeight)
+        intrinsicWidth = count * Self.buttonWidth + Self.edgeInset * 2
+        frame.size = CGSize(width: intrinsicWidth, height: Self.defaultHeight)
     }
+
+    /// 按按钮排布算出来的固有宽度。
+    /// **绝不能从 frame.size 反推**：positionStrip 会在没有选区时把 frame 清零，
+    /// 那样宽度就永久变成 0，表现为"选完区后按钮全没了"（可见但零宽）。
+    /// 用 var 是 Swift 定值初始化规则：init 里调过实例方法后再给 let 赋值会报错
+    private var intrinsicWidth: CGFloat = 0
 
     private static let defaultHeight: CGFloat = 32
 
     required init?(coder: NSCoder) { fatalError("不支持从 nib 构造") }
 
-    /// 按按钮实际排布出来的尺寸，供 positionStrip 定位用。
-    public var idealSize: CGSize { frame.size }
+    /// 供同一行布局定位用
+    public var idealSize: CGSize { CGSize(width: intrinsicWidth, height: Self.defaultHeight) }
 
     @objc private func tapped(_ sender: NSButton) {
         let all = Kind.allCases
