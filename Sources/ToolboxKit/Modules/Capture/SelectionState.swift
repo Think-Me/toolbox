@@ -25,6 +25,8 @@ public struct SelectionState: Equatable {
     /// 按下时光标下的窗口。拖拽位移超过 `dragToFreeThreshold` 就放弃它，
     /// 改为自由矩形——这就是 Snipaste "单击整窗、拖动自由框"的区分方式。
     public var pendingWindow: CGRect?
+    /// 标注子状态。工具非空时鼠标事件归它管，选区逻辑一步都不走
+    public var annotation = AnnotationState()
     public static let dragToFreeThreshold: CGFloat = 4
 
     public init() {}
@@ -48,6 +50,16 @@ public enum SelectionAction: Equatable {
     case nudge(dx: CGFloat, dy: CGFloat)
     /// ⇧+方向键：按当前把手缩放
     case resizeNudge(dx: CGFloat, dy: CGFloat)
+
+    // MARK: 标注（M3.5）
+    case toolChanged(AnnotationTool?)
+    case annotationDown(CGPoint)
+    case annotationDragged(CGPoint)
+    case annotationUp
+    case commitText(String, fontSize: CGFloat)
+    case undoAnnotation
+    case redoAnnotation
+    case clearAnnotations
 }
 
 public enum SelectionReducer {
@@ -58,6 +70,22 @@ public enum SelectionReducer {
     public static func reduce(_ state: SelectionState, _ action: SelectionAction,
                               bounds: CGRect, snap: SnapTargets? = nil) -> SelectionState {
         var s = state
+
+        // 有活动工具时，鼠标三件事全部转给标注状态机。
+        // 这里必须拦在最前面：否则"拖一个矩形"会顺手把选区改成那个矩形的大小。
+        if s.annotation.isActive, let sel = s.rect {
+            switch action {
+            case .mouseDown(let p, _): s.annotation.down(at: p, in: sel); return s
+            case .mouseDragged(let p): s.annotation.drag(to: p, in: sel); return s
+            case .mouseUp: s.annotation.up(); return s
+            case .escape where s.annotation.draft != nil:
+                // Esc 先取消正在画的这一笔，而不是直接关掉整个截图
+                s.annotation.draft = nil
+                return s
+            default: break
+            }
+        }
+
         switch action {
         case .selectWindow(let window):
             let clipped = window.intersection(bounds)
@@ -135,6 +163,32 @@ public enum SelectionReducer {
             let h = s.activeHandle ?? Self.defaultHandle(for: r)
             s.activeHandle = h
             s.rect = resizeBy(r, handle: h, dx: dx, dy: dy, bounds: bounds)
+
+        case .toolChanged(let tool):
+            s.annotation.setTool(tool)
+
+        case .annotationDown(let p):
+            guard let sel = s.rect else { return s }   // 没选区不画
+            s.annotation.down(at: p, in: sel)
+
+        case .annotationDragged(let p):
+            guard let sel = s.rect else { return s }
+            s.annotation.drag(to: p, in: sel)
+
+        case .annotationUp:
+            s.annotation.up()
+
+        case .commitText(let text, let size):
+            s.annotation.commitText(text, fontSize: size)
+
+        case .undoAnnotation:
+            s.annotation.undo()
+
+        case .redoAnnotation:
+            s.annotation.redo()
+
+        case .clearAnnotations:
+            s.annotation.clear()
         }
         return s
     }

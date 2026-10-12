@@ -6,7 +6,7 @@ import Foundation
 /// 任何一个写错就是"撤销后画面错乱"，而且这类 bug 很难稳定复现。
 /// 快照的代价只是内存（上限 50 份 × 几十条小结构体，可忽略），
 /// 换来所有工具共用一套撤销逻辑、不可能不一致。
-public struct AnnotationHistory: Sendable {
+public struct AnnotationHistory: Equatable, Sendable {
     /// 超过就丢最旧的一步（保留"什么都没有"这个基态，见 trim 说明）
     public static let limit = 50
 
