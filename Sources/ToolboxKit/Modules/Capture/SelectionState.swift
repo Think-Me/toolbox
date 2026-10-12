@@ -25,6 +25,10 @@ public struct SelectionState: Equatable {
     /// 按下时光标下的窗口。拖拽位移超过 `dragToFreeThreshold` 就放弃它，
     /// 改为自由矩形——这就是 Snipaste "单击整窗、拖动自由框"的区分方式。
     public var pendingWindow: CGRect?
+    /// 按下那一刻的矩形。拖动/拉把手期间**每帧都以它为基准**算位移，
+    /// 绝不能用上一帧的 rect：那样 `(p - start)` 会被反复叠加，位移按帧数累加，
+    /// 表现为"越拖越快、框子乱跑、不跟手"（用户实测报过）。
+    public var dragStartRect: CGRect?
     /// 标注子状态。工具非空时鼠标事件归它管，选区逻辑一步都不走
     public var annotation = AnnotationState()
     public static let dragToFreeThreshold: CGFloat = 4
@@ -118,14 +122,18 @@ public enum SelectionReducer {
                 if let snap { r = SelectionSnapping.snap(r, to: snap).rect }
                 s.rect = r
             case .hasSelection, .resizing:
-                guard let start = s.dragStart, var r = s.rect, let h = s.activeHandle else { return s }
+                guard let start = s.dragStart, let h = s.activeHandle,
+                      var r = s.dragStartRect ?? s.rect else { return s }
                 r = resize(r, handle: h, from: start, to: p, bounds: bounds)
-                if let snap { r = SelectionSnapping.snap(r, to: snap).rect }
+                // 整体移动**不吸附**：移动不是对齐操作，四边各自吸 ≤6pt
+                // 只会让框子相对光标发抖。拉边缘/新框选才需要吸。
+                if let snap, h != .inside { r = SelectionSnapping.snap(r, to: snap).rect }
                 s.rect = r
                 s.phase = .resizing
             }
 
         case .mouseUp:
+            s.dragStartRect = nil
             if s.phase == .dragging {
                 s.phase = .hasSelection
                 s.activeHandle = nil
@@ -142,6 +150,7 @@ public enum SelectionReducer {
             if s.rect != nil || s.phase != .idle {
                 s.rect = nil
                 s.dragStart = nil
+                s.dragStartRect = nil
                 s.activeHandle = nil
                 s.phase = .idle
             } else {
@@ -213,16 +222,19 @@ public enum SelectionReducer {
             case .outside:
                 s.phase = .dragging
                 s.dragStart = p
+                s.dragStartRect = nil      // 新框选是绝对坐标，不需要基准
                 s.rect = SelectionGeometry.normalize(from: p, to: p, in: bounds)
                 s.activeHandle = nil
             case .inside:
                 // 内部按下 = 整体拖动：把把手记成 inside，drag 时按位移平移
                 s.phase = .resizing
                 s.dragStart = p
+                s.dragStartRect = r
                 s.activeHandle = .inside
             default:
                 s.phase = .resizing
                 s.dragStart = p
+                s.dragStartRect = r
                 s.activeHandle = h
             }
             return

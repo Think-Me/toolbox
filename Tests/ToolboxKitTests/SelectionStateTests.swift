@@ -251,3 +251,85 @@ private let hoverWin = CGRect(x: 204, y: 143, width: 904, height: 728)
     #expect(s.rect?.minX == 204)
     #expect(s.rect?.minY == 143)
 }
+
+// MARK: 整体拖动选区（用户报"乱跑、不跟手"）
+
+private func selected(at r: CGRect) -> SelectionState {
+    var s = SelectionState()
+    s.phase = .hasSelection
+    s.rect = r
+    return s
+}
+
+@Test func movingSelectionTracksCursorExactly() {
+    // 每一帧的位移都必须等于"当前光标 - 按下点"，而不是把增量再叠一次。
+    // 曾经写成 s.rect.origin += (p - start)，而 s.rect 已是上一帧的结果，
+    // 于是位移按帧数累加 —— 越拖越快、离光标越来越远。
+    let origin = CGRect(x: 200, y: 200, width: 300, height: 200)
+    var s = selected(at: origin)
+    s = SelectionReducer.reduce(s, .mouseDown(CGPoint(x: 300, y: 250)),
+                                bounds: CGRect(x: 0, y: 0, width: 1440, height: 900))
+    #expect(s.activeHandle == .inside)
+    let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+    for step in stride(from: 5.0, through: 100.0, by: 5) {
+        s = SelectionReducer.reduce(s, .mouseDragged(CGPoint(x: 300 + step, y: 250 + step)),
+                                    bounds: screen)
+        #expect(s.rect?.origin == CGPoint(x: 200 + step, y: 200 + step))
+    }
+}
+
+@Test func movingThenReversingReturnsToStart() {
+    // 跟手的定义：拖回去必须回到原点。累加型 bug 在这里必露馅
+    let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+    var s = selected(at: CGRect(x: 200, y: 200, width: 300, height: 200))
+    s = SelectionReducer.reduce(s, .mouseDown(CGPoint(x: 300, y: 250)), bounds: screen)
+    for step in stride(from: 10.0, through: 80.0, by: 10) {
+        s = SelectionReducer.reduce(s, .mouseDragged(CGPoint(x: 300 + step, y: 250)), bounds: screen)
+    }
+    for step in stride(from: 70.0, through: 0.0, by: -10) {
+        s = SelectionReducer.reduce(s, .mouseDragged(CGPoint(x: 300 + step, y: 250)), bounds: screen)
+    }
+    #expect(s.rect?.origin == CGPoint(x: 200, y: 200))
+    #expect(s.rect?.size == CGSize(width: 300, height: 200))   // 尺寸不能被拖动改变
+}
+
+@Test func movingDoesNotSnapButResizingStillDoes() {
+    let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+    // 窗口右边缘在 502：拖动时若吸附，选区右边会被拽过去 → 不跟手
+    let targets = SelectionSnapping.targets(windows: [CGRect(x: 100, y: 100, width: 402, height: 402)],
+                                            screen: screen)
+    var s = selected(at: CGRect(x: 200, y: 200, width: 300, height: 200))
+    s = SelectionReducer.reduce(s, .mouseDown(CGPoint(x: 300, y: 250)), bounds: screen,
+                                snap: targets)
+    s = SelectionReducer.reduce(s, .mouseDragged(CGPoint(x: 303, y: 250)), bounds: screen,
+                                snap: targets)
+    #expect(s.rect?.origin.x == 203)          // 差 1pt 就到 502，但不许吸
+    // 同一个目标在**拉边缘**时仍然要吸
+    let dragged = SelectionSnapping.snap(CGRect(x: 200, y: 200, width: 302, height: 200),
+                                         to: targets)
+    #expect(dragged.snappedEdges.contains(.right))
+    #expect(dragged.rect.maxX == 502)
+}
+
+@Test func movingClampsAtScreenEdges() {
+    let screen = CGRect(x: 0, y: 0, width: 1000, height: 800)
+    var s = selected(at: CGRect(x: 100, y: 100, width: 300, height: 200))
+    s = SelectionReducer.reduce(s, .mouseDown(CGPoint(x: 200, y: 200)), bounds: screen)
+    s = SelectionReducer.reduce(s, .mouseDragged(CGPoint(x: -5000, y: -5000)), bounds: screen)
+    #expect(s.rect?.origin == .zero)
+    #expect(s.rect?.size == CGSize(width: 300, height: 200))
+    s = SelectionReducer.reduce(s, .mouseDragged(CGPoint(x: 5000, y: 5000)), bounds: screen)
+    #expect(s.rect?.maxX == 1000 && s.rect?.maxY == 800)
+    #expect(s.rect?.size == CGSize(width: 300, height: 200))
+}
+
+@Test func cornerResizeStillFollowsCursor() {
+    let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+    var s = selected(at: CGRect(x: 200, y: 200, width: 300, height: 200))
+    s = SelectionReducer.reduce(s, .mouseDown(CGPoint(x: 500, y: 400)), bounds: screen)
+    #expect(s.activeHandle == .bottomRight)
+    s = SelectionReducer.reduce(s, .mouseDragged(CGPoint(x: 560, y: 440)), bounds: screen)
+    #expect(s.rect == CGRect(x: 200, y: 200, width: 360, height: 240))
+    s = SelectionReducer.reduce(s, .mouseDragged(CGPoint(x: 560, y: 440)), bounds: screen)
+    #expect(s.rect == CGRect(x: 200, y: 200, width: 360, height: 240))   // 同一位置不漂移
+}
