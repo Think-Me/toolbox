@@ -31,6 +31,9 @@ public final class HotkeyCenter {
     private var registry = HotkeyRegistry()
     private var refs: [UInt32: EventHotKeyRef] = [:]
     private var slots: [HotkeyID: UInt32] = [:]   // 业务 id → registry 内部 id
+    /// 最后一次成功注册的参数，suspend/resume 要靠它复原
+    private var bindings: [HotkeyID: (combo: KeyCombo, handler: @MainActor () -> Void)] = [:]
+    private var suspended: [HotkeyID: (combo: KeyCombo, handler: @MainActor () -> Void)] = [:]
     private var callRef: EventHandlerCallRef?
     private var handlerInstalled = false
 
@@ -76,14 +79,41 @@ public final class HotkeyCenter {
         }
         refs[assigned] = ref
         slots[id] = assigned
+        bindings[id] = (combo, handler)
         lastError = nil
         return true
     }
 
     public func unregister(_ id: HotkeyID) {
+        bindings.removeValue(forKey: id)
+        suspended.removeValue(forKey: id)
         guard let assigned = slots.removeValue(forKey: id) else { return }
         unregisterID(assigned)
     }
+
+    /// 临时注销若干热键。
+    ///
+    /// 文字工具的内联编辑器在场时**必须**注销：Carbon 全局热键不看焦点，
+    /// 打字时按下 F2/⌘⇧V 会直接呼出整屏贴图或剪贴板面板，把编辑器抢掉。
+    /// 注意 unregister 会清掉 bindings，所以这里先把参数搬到 suspended 存着。
+    public func suspend(_ ids: [HotkeyID]) {
+        for id in ids {
+            guard let b = bindings[id], suspended[id] == nil else { continue }
+            unregister(id)
+            suspended[id] = b
+        }
+    }
+
+    public func resume(_ ids: [HotkeyID]) {
+        for id in ids {
+            guard let b = suspended.removeValue(forKey: id) else { continue }
+            register(id, b.combo, handler: b.handler)
+        }
+    }
+
+    public func resumeAll() { resume(Array(suspended.keys)) }
+
+    public var suspendedIDs: Set<HotkeyID> { Set(suspended.keys) }
 
     private func unregisterID(_ assigned: UInt32) {
         if let ref = refs.removeValue(forKey: assigned) { UnregisterEventHotKey(ref) }

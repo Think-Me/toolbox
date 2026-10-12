@@ -30,6 +30,10 @@ public final class SelectionView: NSView {
 
     private let strip = ActionStripView()
     private let toolbar = AnnotationToolbarView()
+    /// 文字工具的内联编辑器。nil = 没在编辑
+    private var textEditor: NSTextField?
+    /// 编辑器在场时要挂起的热键
+    private static let suspendedWhileTyping: [HotkeyID] = HotkeyID.allCases
     /// 工具条与操作条之间（以及两块面板各自内部）的缝隙
     private static let rowGap: CGFloat = CaptureToolbarLayout.groupGap
 
@@ -253,6 +257,9 @@ public final class SelectionView: NSView {
     // MARK: 鼠标
 
     override public func mouseDown(with event: NSEvent) {
+        // 正在打字时这一下点的是"别处"：先提交，并且**吃掉**这次点击，
+        // 否则同一次按下既提交文字又起一个新标注
+        if textEditor != nil { endTextEditing(commit: true); return }
         let p = convert(event.locationInWindow, from: nil)
         let hover = state.phase == .idle
             ? (hoverWindow ?? SelectionSnapping.topmostWindow(containing: p, in: windowCandidates))
@@ -267,7 +274,9 @@ public final class SelectionView: NSView {
 
     override public func mouseUp(with event: NSEvent) {
         logEvent("mouseUp")
+        let wasText = state.annotation.tool == .text
         reduce(.mouseUp)
+        if wasText, let anchor = state.annotation.textAnchor { beginTextEditing(at: anchor) }
     }
 
     private func convert(_ event: NSEvent) -> CGPoint {
@@ -327,6 +336,8 @@ public final class SelectionView: NSView {
 
     override public func keyDown(with event: NSEvent) {
         logEvent("keyDown code=\(event.keyCode)")
+        // 编辑器在场时键盘归它：否则 Esc/⌘C 会被遮罩抢走
+        if textEditor != nil { super.keyDown(with: event); return }
         let shift = event.modifierFlags.contains(.shift)
         switch event.keyCode {
         case UInt16(kVK_Escape): reduce(.escape)
@@ -341,6 +352,63 @@ public final class SelectionView: NSView {
             reduce(event.modifierFlags.contains(.shift) ? .redoAnnotation : .undoAnnotation)
         default: break
         }
+    }
+
+    // MARK: 文字工具的内联编辑
+
+    /// 在锚点起一个内联输入框。
+    /// 不用 NSPanel/单独窗口：那会引入"焦点在别处、遮罩收不到键"的一类问题，
+    /// 而且贴图画面的坐标对齐要再算一层。
+    private func beginTextEditing(at anchor: CGPoint) {
+        endTextEditing(commit: false)
+        guard let sel = state.rect else { return }
+        let size = state.annotation.fontSize * 1.45
+        let width = Swift.min(Self.maxEditingWidth, Swift.max(120, sel.maxX - anchor.x))
+        let f = NSTextField(frame: CGRect(x: anchor.x, y: anchor.y, width: width, height: size))
+        f.isBordered = false
+        f.isBezeled = false
+        f.drawsBackground = false
+        f.focusRingType = .none
+        f.lineBreakMode = .byClipping
+        f.cell?.wraps = false
+        f.cell?.isScrollable = true
+        f.cell?.usesSingleLineMode = true
+        f.font = NSFont.systemFont(ofSize: state.annotation.fontSize, weight: .semibold)
+        f.textColor = state.annotation.color.nsColor
+        // 插入点在 NSTextField 上没有直接属性：它用的是窗口共享的 field editor
+        f.delegate = self
+        f.placeholderAttributedString = NSAttributedString(
+            string: "输入文字",
+            attributes: [.foregroundColor: NSColor(calibratedWhite: 1, alpha: 0.45),
+                         .font: NSFont.systemFont(ofSize: state.annotation.fontSize,
+                                                  weight: .semibold)])
+        addSubview(f)
+        textEditor = f
+        // 热键必须挂起：Carbon 全局热键不看焦点，打字时按到 F2/⌘⇧V
+        // 会直接把编辑器抢掉，用户会觉得"一打字就弹别的东西"
+        HotkeyCenter.shared.suspend(Self.suspendedWhileTyping)
+        window?.makeFirstResponder(f)
+        window?.makeKeyAndOrderFront(nil)
+        // 光标颜色：深色背景上默认的黑光标几乎看不见
+        if let editor = window?.fieldEditor(true, for: f) as? NSTextView {
+            editor.insertionPointColor = .white
+        }
+        needsDisplay = true
+    }
+
+    private static let maxEditingWidth: CGFloat = 520
+
+    private func endTextEditing(commit: Bool) {
+        guard let f = textEditor else { return }
+        textEditor = nil
+        let text = f.stringValue
+        f.removeFromSuperview()
+        HotkeyCenter.shared.resume(Self.suspendedWhileTyping)
+        if commit {
+            reduce(.commitText(text, fontSize: state.annotation.fontSize))
+        }
+        window?.makeFirstResponder(self)
+        needsDisplay = true
     }
 
     // MARK: 操作条
@@ -501,5 +569,29 @@ public final class ActionStripView: NSView {
         let all = Kind.allCases
         guard sender.tag >= 0, sender.tag < all.count else { return }
         onAction?(all[sender.tag])
+    }
+}
+
+
+// MARK: - 内联文字编辑器
+
+@MainActor
+extension SelectionView: NSTextFieldDelegate {
+    /// 回车提交、Esc 取消。返回 true 表示这个键已经用掉，别再往上抛
+    /// （否则 Esc 会被遮罩当成"取消截图"，回车会被当成"钉图"）。
+    nonisolated public func control(_ control: NSControl, textView: NSTextView,
+                                    doCommandBy commandSelector: Selector) -> Bool {
+        // 协议要求 nonisolated，但这个回调只可能在主线程来
+        MainActor.assumeIsolated {
+            switch commandSelector {
+            case #selector(NSResponder.insertNewline(_:)):
+                endTextEditing(commit: true)
+            case #selector(NSResponder.cancelOperation(_:)):
+                endTextEditing(commit: false)
+            default:
+                return
+            }
+        }
+        return true
     }
 }
