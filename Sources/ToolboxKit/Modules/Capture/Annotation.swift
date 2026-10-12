@@ -70,13 +70,17 @@ public struct Annotation: Codable, Equatable, Identifiable, Sendable {
     public var lineWidth: CGFloat
     public var text: String?
     public var fontSize: CGFloat
+    /// 仅 rect 有意义。默认 false：截图标注不该一上来就盖住底下的内容
+    public var filled: Bool
 
     public init(id: UUID = UUID(), tool: AnnotationTool, points: [CGPoint],
                 color: AnnotationColor, lineWidth: CGFloat,
-                text: String? = nil, fontSize: CGFloat = AnnotationPalette.defaultFontSize) {
+                text: String? = nil, fontSize: CGFloat = AnnotationPalette.defaultFontSize,
+                filled: Bool = false) {
         self.id = id; self.tool = tool; self.points = points
         self.color = color; self.lineWidth = lineWidth
         self.text = text; self.fontSize = fontSize
+        self.filled = filled
     }
 
     /// 所有点的最小外接矩形。空列表返回 .zero 而不是崩。
