@@ -40,11 +40,14 @@ public final class ClipboardRootView: NSView {
 /// 尺寸与配色常量。集中一处，改视觉不用翻文件。
 enum ClipboardStyle {
     static let panelWidth: CGFloat = 360
-    static let headerHeight: CGFloat = 34
+    /// 头部（标题 + 搜索框 + 与列表的间距）实际占的高度。
+    /// 面板总高按它算，所以这个值必须和 updateNSView 里的布局一致。
+    static let headerHeight: CGFloat = 46
     static let rowHeightText: CGFloat = 30
     static let rowHeightImage: CGFloat = 72
     static let thumbnail: CGFloat = 56
     static let inset: CGFloat = 12
+    static let verticalPadding: CGFloat = 12
     static let title = "历史纪录"
 
     /// 快贴那种浅灰磨砂底 + 近黑正文 + 中灰次要文字。
@@ -181,7 +184,7 @@ public final class ClipboardListView: NSObject, NSTableViewDataSource, NSTableVi
                           viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < items.count else { return nil }
         let cell = ClipboardCellView.dequeue(from: tableView)
-        cell.configure(with: items[row], row: row, media: media, thumbnails: thumbnails)
+        cell.configure(with: items[row], media: media, thumbnails: thumbnails)
         return cell
     }
 
@@ -270,7 +273,6 @@ final class HoveringTableView: NSTableView {
 public final class ClipboardCellView: NSTableCellView {
     static let reuseID = NSUserInterfaceItemIdentifier("clipboard.cell")
 
-    private let indexLabel = NSTextField(labelWithString: "")
     private let icon = NSImageView()
     private let title = NSTextField(labelWithString: "")
     private let chevron = NSImageView()
@@ -278,13 +280,6 @@ public final class ClipboardCellView: NSTableCellView {
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        indexLabel.translatesAutoresizingMaskIntoConstraints = false
-        // NSFont.systemFont 没有 design 参数，等宽数字要用专用工厂方法
-        indexLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-        indexLabel.textColor = ClipboardStyle.secondaryText
-        indexLabel.alignment = .center
-        indexLabel.backgroundColor = .clear
-
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.imageScaling = .scaleProportionallyUpOrDown
         title.translatesAutoresizingMaskIntoConstraints = false
@@ -300,16 +295,12 @@ public final class ClipboardCellView: NSTableCellView {
         chevron.contentTintColor = ClipboardStyle.chevron
         chevron.imageScaling = .scaleNone
 
-        addSubview(indexLabel)
         addSubview(icon)
         addSubview(title)
         addSubview(chevron)
         NSLayoutConstraint.activate([
-            indexLabel.leadingAnchor.constraint(equalTo: leadingAnchor,
-                                                constant: ClipboardStyle.inset),
-            indexLabel.widthAnchor.constraint(equalToConstant: 16),
-            indexLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.leadingAnchor.constraint(equalTo: indexLabel.trailingAnchor, constant: 6),
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor,
+                                          constant: ClipboardStyle.inset),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 18),
             icon.heightAnchor.constraint(equalToConstant: 18),
@@ -325,12 +316,9 @@ public final class ClipboardCellView: NSTableCellView {
 
     required init?(coder: NSCoder) { fatalError("不支持从 nib 构造") }
 
-    func configure(with item: ClipboardItem, row: Int, media: MediaStore?,
+    func configure(with item: ClipboardItem, media: MediaStore?,
                    thumbnails: ThumbnailCache) {
         boundSHA = item.mediaSHA256
-        // 行首的 ⌘数字标号：没有标号的行（第 10 行起）留空而不是写 "10"，
-        // 否则等于承诺了一个不存在的快捷键
-        indexLabel.stringValue = ClipboardListSelection.quickPickLabel(row: row) ?? ""
         title.stringValue = item.rowTitle
         toolTip = item.tooltipDetail
         title.textColor = ClipboardStyle.primaryText

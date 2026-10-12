@@ -221,6 +221,11 @@ public final class AppModel: ObservableObject {
         persist()
     }
 
+    public func setClipboardVisibleRows(_ n: Int) {
+        settings.clipboardVisibleRows = ClipboardPanelGeometry.clampedRows(n)
+        persist()
+    }
+
     public func setPinsParticipateInCapture(_ on: Bool) {
         settings.pinsParticipateInCapture = on
         persist()

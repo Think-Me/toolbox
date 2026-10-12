@@ -27,7 +27,22 @@ public final class ClipboardPanelController: NSResponder {
     public var onPinImage: ((Data) -> Void)?
 
     public static var panelWidth: CGFloat { ClipboardStyle.panelWidth }
-    public static let panelHeight: CGFloat = 420
+
+    /// 面板高度按"显示几行"算，而不是写死 420。
+    /// 用户可以在设置里调（比如 20 行），调大后一屏能直接看到更多条目，不用滚。
+    public static func panelHeight(rows: Int, availableHeight: CGFloat) -> CGFloat {
+        ClipboardPanelGeometry.panelHeight(
+            rows: ClipboardPanelGeometry.clampedRows(rows),
+            headerHeight: ClipboardStyle.headerHeight,
+            rowHeight: ClipboardStyle.rowHeightText,
+            verticalPadding: ClipboardStyle.verticalPadding,
+            maxAvailable: availableHeight)
+    }
+
+    public static func panelHeight(settings: AppSettings, screen: NSScreen?) -> CGFloat {
+        let available = (screen ?? NSScreen.main)?.visibleFrame.height ?? 600
+        return panelHeight(rows: settings.clipboardVisibleRows, availableHeight: available)
+    }
 
     public init(store: ClipboardStore, media: MediaStore, simulator: PasteSimulator,
                 presenter: PanelPresenter = .shared,
@@ -60,8 +75,12 @@ public final class ClipboardPanelController: NSResponder {
         view.root.onDeleteRequested = { [weak self] in self?.deleteCurrent() ?? false }
         listView = view
 
+        let settings = settingsProvider()
+        let cursor = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(cursor) } ?? NSScreen.main
+        let height = Self.panelHeight(settings: settings, screen: screen)
         presenter.show(content: view.root, anchor: .cursor,
-                       width: Self.panelWidth, height: Self.panelHeight) { [weak self] _ in
+                       width: Self.panelWidth, height: height) { [weak self] _ in
             self?.listView = nil
             self?.query = ""
             self?.degradeNote = nil
