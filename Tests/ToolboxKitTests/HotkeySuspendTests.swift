@@ -2,89 +2,59 @@ import AppKit
 import Testing
 @testable import ToolboxKit
 
-/// 钉住"热键用着用着失灵"这个 bug：
-/// `suspend` 之后如果没有任何一条路径调用 `resume`，全部全局热键会永久注销。
-/// 现在遮罩收口 (`dismiss`) 无条件 `resumeAll`，恢复不再依赖调用者自觉。
+/// 热键闸门的回归测试。
+///
+/// 原先的设计是"打字时把 6 个全局热键注销、编辑结束后重注册"，
+/// 结果任何一条忘记恢复的路径都会让热键**永久失灵且不重启不好**
+/// （实测踩了两次：点钉图收口、输入框没拿到焦点）。
+/// 现在改成 weak 宿主闸门：没有需要恢复的状态，所以不可能漏。
+/// 这些测试也因此不再依赖 Carbon，任何环境都真的在跑。
 @MainActor
-private func tryRegister(_ center: HotkeyCenter, _ id: HotkeyID,
-                         _ combo: KeyCombo) -> Bool {
-    center.register(id, combo, handler: {}) && center.boundCombo(for: id) != nil
+@Test func gateFollowsHostLifetime() {
+    final class Host {}
+    let center = HotkeyCenter()
+    #expect(center.isIgnoringHotkeysForTextInput == false)
+
+    let host = Host()
+    center.textEditingHost = host
+    #expect(center.isIgnoringHotkeysForTextInput == true)
+
+    center.textEditingHost = nil
+    #expect(center.isIgnoringHotkeysForTextInput == false)
 }
 
-@Test
-@MainActor func suspendHidesBindingAndResumeAllRestoresIt() throws {
+@MainActor
+@Test func gateClearsItselfWhenHostDies() {
+    // 这条是整个改动的意义：宿主（遮罩视图）被释放，闸门自动打开。
+    // 不需要谁去"记得恢复"
     let center = HotkeyCenter()
-    guard tryRegister(center, .killAllPins,
-                      KeyCombo(keyCode: KeyCombo.f3, carbonModifiers: 0)) else {
-        throw SkipError()      // 无 GUI 的环境装不上 Carbon，跳过而不是空过
+    do {
+        let host = NSObject()
+        center.textEditingHost = host
+        #expect(center.isIgnoringHotkeysForTextInput == true)
     }
-    center.suspend([.killAllPins])
-    #expect(center.boundCombo(for: .killAllPins) == nil)
-    #expect(center.suspendedIDs == [.killAllPins])
-
-    center.resumeAll()
-    #expect(center.boundCombo(for: .killAllPins) != nil)
-    #expect(center.suspendedIDs.isEmpty)
+    #expect(center.isIgnoringHotkeysForTextInput == false)
 }
 
-@Test
-@MainActor func resumeAllWithoutSuspendIsHarmless() {
-    // dismiss() 现在无条件调用它，所以"什么都没挂起"时必须完全无害
+@MainActor
+@Test func dispatchIsSwallowedWhileGated() {
+    // 直接验证"回调真的没被调用"，而不是只看标志位
+    final class Counter { var fired = 0 }
+    final class Host {}
     let center = HotkeyCenter()
-    center.resumeAll()
-    center.resumeAll()
-    #expect(center.suspendedIDs.isEmpty)
-}
+    let counter = Counter()
+    let combo = KeyCombo(keyCode: KeyCombo.ansiA, carbonModifiers: KeyCombo.control)
+    // 真注册需要事件处理器装得上；装不上的环境（无 GUI CI）跳过这条，
+    // 前两条不依赖 Carbon，任何环境都在真跑
+    guard center.register(.captureRegion, combo, handler: { counter.fired += 1 }) else { return }
 
-@Test
-@MainActor func doubleSuspendKeepsTheSnapshot() throws {
-    // 第二次挂起不能把已经清掉的 bindings 存成 nil，否则永远复原不出来
-    let center = HotkeyCenter()
-    guard tryRegister(center, .captureRegion,
-                      KeyCombo(keyCode: KeyCombo.ansiA,
-                               carbonModifiers: KeyCombo.control | KeyCombo.cmd)) else {
-        throw SkipError()
-    }
-    center.suspend([.captureRegion])
-    center.suspend([.captureRegion])
-    #expect(center.suspendedIDs == [.captureRegion])
-    center.resumeAll()
-    #expect(center.boundCombo(for: .captureRegion) != nil)
-}
+    let host = Host()                 // 必须持有：weak 不会帮你留住临时对象
+    center.textEditingHost = host
+    center.dispatchForTesting(.captureRegion)
+    #expect(counter.fired == 0)
 
-@Test
-@MainActor func resumeOneLeavesTheOthersSuspended() throws {
-    let center = HotkeyCenter()
-    guard tryRegister(center, .captureRegion,
-                      KeyCombo(keyCode: KeyCombo.ansiD, carbonModifiers: KeyCombo.control)),
-          tryRegister(center, .captureFull,
-                      KeyCombo(keyCode: KeyCombo.f2, carbonModifiers: 0)) else { throw SkipError() }
-    center.suspend(HotkeyID.allCases)
-    center.resume([.captureRegion])
-    #expect(center.boundCombo(for: .captureRegion) != nil)
-    #expect(center.boundCombo(for: .captureFull) == nil)
-    center.resumeAll()
-    #expect(center.boundCombo(for: .captureFull) != nil)
+    center.textEditingHost = nil
+    center.dispatchForTesting(.captureRegion)
+    #expect(counter.fired == 1)
+    _ = host
 }
-
-@Test
-@MainActor func reRegisterWhileSuspendedWins() throws {
-    // 挂起期间用户在设置里改键位：新注册必须生效，旧快照不能再把它盖回去
-    let center = HotkeyCenter()
-    guard tryRegister(center, .openSettings,
-                      KeyCombo(keyCode: KeyCombo.comma,
-                               carbonModifiers: KeyCombo.control | KeyCombo.cmd)) else {
-        throw SkipError()
-    }
-    center.suspend([.openSettings])
-    #expect(center.boundCombo(for: .openSettings) == nil)
-    guard tryRegister(center, .openSettings,
-                      KeyCombo(keyCode: KeyCombo.space, carbonModifiers: KeyCombo.control)) else {
-        throw SkipError()
-    }
-    center.resumeAll()
-    #expect(center.boundCombo(for: .openSettings) == KeyCombo(keyCode: KeyCombo.space,
-                                                              carbonModifiers: KeyCombo.control))
-}
-
-private struct SkipError: Error {}

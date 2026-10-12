@@ -117,13 +117,10 @@ public final class SelectionOverlayController {
     }
 
     public func dismiss() {
-        // **无条件恢复热键**：内联文字编辑器会 suspend 掉全部全局热键，
-        // 而 resume 原先只在 endTextEditing 里。"打完字直接点钉图"这条路径
-        // 根本不经过 endTextEditing（按钮 → commit → dismiss），于是热键永久
-        // 处于注销状态，表现为"用着用着 ⌃⌘A 失灵，不重启不好"。
-        // 放在这个唯一的收口里，就不依赖任何一条调用路径的自觉。
-        HotkeyCenter.shared.resumeAll()
         view?.closeEditorForDismiss()
+        // 双保险：闸门本身是 weak，视图释放后会自动失效；
+        // 这里显式清一次，免得"视图还被别处强引用着"时热键继续被忽略
+        HotkeyCenter.shared.textEditingHost = nil
         window?.orderOut(nil)
         window = nil
         view = nil

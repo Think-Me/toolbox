@@ -40,7 +40,7 @@ public final class SelectionView: NSView {
     private var textEditor: NSTextField?
     private var annotationDefaults = AnnotationDefaults.standard
     /// 编辑器在场时要挂起的热键
-    private static let suspendedWhileTyping: [HotkeyID] = HotkeyID.allCases
+
     /// 工具条与操作条之间（以及两块面板各自内部）的缝隙
     private static let rowGap: CGFloat = CaptureToolbarLayout.groupGap
 
@@ -342,8 +342,12 @@ public final class SelectionView: NSView {
 
     override public func keyDown(with event: NSEvent) {
         logEvent("keyDown code=\(event.keyCode)")
-        // 编辑器在场时键盘归它：否则 Esc/⌘C 会被遮罩抢走
-        if textEditor != nil { super.keyDown(with: event); return }
+        // 键事件能落到这里，说明输入框**没有**消费它（正常打字时键是发给
+        // field editor 的，根本不会走到这）。所以这里先收掉编辑器，
+        // 然后**继续**按下面的正常逻辑处理这个键。
+        // 之前是直接 super.keyDown + return：输入框一旦没拿到焦点，
+        // Esc / 回车 / ⌘C 全部失效，遮罩变成关不掉的死屏。
+        if textEditor != nil { endTextEditing(commit: true) }
         let shift = event.modifierFlags.contains(.shift)
         switch event.keyCode {
         case UInt16(kVK_Escape): reduce(.escape)
@@ -390,15 +394,20 @@ public final class SelectionView: NSView {
                                                   weight: .semibold)])
         addSubview(f)
         textEditor = f
-        // 热键必须挂起：Carbon 全局热键不看焦点，打字时按到 F2/⌘⇧V
-        // 会直接把编辑器抢掉，用户会觉得"一打字就弹别的东西"
-        HotkeyCenter.shared.suspend(Self.suspendedWhileTyping)
-        window?.makeFirstResponder(f)
+        // 顺序要紧：**先让窗口成为 key，再设 first responder**。
+        // 反过来写时 makeKeyAndOrderFront 会重排 first responder，
+        // 输入框拿不到键盘 —— 于是打字进不去、回车和 Esc 全被下面的
+        // "编辑器优先"逻辑吞掉，编辑器再也关不掉，热键一直挂着。
+        // （用户一次报的三个症状同源）
         window?.makeKeyAndOrderFront(nil)
+        let tookFocus = window?.makeFirstResponder(f) ?? false
         // 光标颜色：深色背景上默认的黑光标几乎看不见
         if let editor = window?.fieldEditor(true, for: f) as? NSTextView {
             editor.insertionPointColor = .white
         }
+        // 热键闸门：以 self 为宿主，遮罩视图一消失就自动失效（见 HotkeyCenter 注释）
+        HotkeyCenter.shared.textEditingHost = tookFocus ? self : nil
+        if !tookFocus { logEvent("TEXTEDIT 输入框拿不到焦点") }
         needsDisplay = true
     }
 
@@ -409,15 +418,19 @@ public final class SelectionView: NSView {
         guard textEditor != nil else { return }
         textEditor?.removeFromSuperview()
         textEditor = nil
+        HotkeyCenter.shared.textEditingHost = nil
         needsDisplay = true
     }
 
-    private func endTextEditing(commit: Bool) {
+    /// - Parameter typed: 正在编辑时的实时内容。
+    /// **不能读 `f.stringValue`**：编辑过程中它还是"上一次提交的值"（首次输入即空串），
+    /// 实时文本在共享的 field editor 里。读错的表现就是"打的字全不保存"。
+    private func endTextEditing(commit: Bool, typed: String? = nil) {
         guard let f = textEditor else { return }
         textEditor = nil
-        let text = f.stringValue
+        let text = typed ?? f.currentEditor()?.string ?? f.stringValue
         f.removeFromSuperview()
-        HotkeyCenter.shared.resume(Self.suspendedWhileTyping)
+        if textEditor == nil { HotkeyCenter.shared.textEditingHost = nil }
         if commit {
             reduce(.commitText(text, fontSize: state.annotation.fontSize))
         }
@@ -608,7 +621,7 @@ extension SelectionView: NSTextFieldDelegate {
         MainActor.assumeIsolated {
             switch commandSelector {
             case #selector(NSResponder.insertNewline(_:)):
-                endTextEditing(commit: true)
+                endTextEditing(commit: true, typed: textView.string)
             case #selector(NSResponder.cancelOperation(_:)):
                 endTextEditing(commit: false)
             default:

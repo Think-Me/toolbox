@@ -213,6 +213,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 captureFlow.startRegionCapture()
                 return
             }
+            if CommandLine.arguments.contains("--text-probe") {
+                // 文字工具端到端验证：只预置选区 + 选中文字工具，
+                // 之后由 Scripts/cg-click / cg-type 合成真实点击与输入
+                captureFlow.onMessage = { text in DegradeNotice.shared.show(text) }
+                captureFlow.overlayProbe = { view in
+                    view.magnifierEnabled = false
+                    view.applyForProbe([
+                        .selectWindow(CGRect(x: 180, y: 140, width: 560, height: 400)),
+                        .toolChanged(.text),
+                    ])
+                }
+                if let main = NSScreen.screens.first {
+                    CGWarpMouseCursorPosition(CGPoint(x: main.frame.midX, y: main.frame.midY))
+                    CGAssociateMouseAndMouseCursorPosition(1)
+                }
+                captureFlow.startRegionCapture()
+                return
+            }
             if CommandLine.arguments.contains("--annotation-preview") {
                 // 截图标注的可视化核对：预置选区 + 五种工具的各一个图形。
                 // 自动化环境里点不了遮罩（合成键被 Secure Input 丢弃），所以靠它看效果。
@@ -515,7 +533,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                              "--perms", "--smoke-hotkey", "--settings-preview",
                              "--grant-screen", "--capture-probe", "--pin-demo",
                              "--hosts-e2e", "--menu-probe", "--paste-probe",
-                             "--overlay-preview", "--clip-preview"]
+                             "--overlay-preview", "--clip-preview", "--text-probe"]
     /// 实验：策略在 finishLaunching 之后再改可能完不成激活握手，
     /// 所以 --regular-mode 在 app.run() 之前就把策略定成 .regular。
     static var earlyRegular: Bool { CommandLine.arguments.contains("--regular-mode") }
