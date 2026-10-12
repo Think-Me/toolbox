@@ -213,6 +213,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 captureFlow.startRegionCapture()
                 return
             }
+            if CommandLine.arguments.contains("--annotation-preview") {
+                // 截图标注的可视化核对：预置选区 + 五种工具的各一个图形。
+                // 自动化环境里点不了遮罩（合成键被 Secure Input 丢弃），所以靠它看效果。
+                captureFlow.onMessage = { text in DegradeNotice.shared.show(text) }
+                captureFlow.overlayProbe = { view in
+                    // 放大镜会挡住要看的东西，探针里关掉
+                    view.magnifierEnabled = false
+                    _ = 0
+                    view.applyForProbe([
+                        .selectWindow(CGRect(x: 180, y: 140, width: 560, height: 400)),
+                        .toolChanged(.rect),
+                        .annotationDown(CGPoint(x: 200, y: 160)),
+                        .annotationDragged(CGPoint(x: 320, y: 230)),
+                        .annotationUp,
+                        // 马赛克压在**一行字**上：该不该生效，看字还认不认得
+                        .toolChanged(.mosaic),
+                        .annotationDown(CGPoint(x: 200, y: 150)),
+                        .annotationDragged(CGPoint(x: 560, y: 176)),
+                        .annotationUp,
+                        .toolChanged(.arrow),
+                        .annotationDown(CGPoint(x: 400, y: 265)),
+                        .annotationDragged(CGPoint(x: 600, y: 345)),
+                        .annotationUp,
+                        .toolChanged(.pen),
+                        .annotationDown(CGPoint(x: 200, y: 285)),
+                        .annotationDragged(CGPoint(x: 230, y: 250)),
+                        .annotationDragged(CGPoint(x: 260, y: 305)),
+                        .annotationDragged(CGPoint(x: 290, y: 250)),
+                        .annotationDragged(CGPoint(x: 320, y: 305)),
+                        .annotationUp,
+                        .toolChanged(.text),
+                        .annotationDown(CGPoint(x: 200, y: 360)),
+                        .annotationUp,
+                        .commitText("标注文字 ABC", fontSize: 26),
+                        .toolChanged(nil),
+                    ])
+                    let a = view.state.annotation
+                    FileHandle.standardError.write(
+                        ("ANNPROBE count=\(a.annotations.count) canUndo=\(a.canUndo) "
+                         + "canRedo=\(a.canRedo) tool=\(String(describing: a.tool))\n")
+                            .data(using: .utf8)!)
+                }
+                // 遮罩跟着光标走（captureUnderCursor），外接屏在位时鼠标常常在
+                // 另一块屏上，截图核对就会拍到空屏。先把光标拉回主屏。
+                if let main = NSScreen.screens.first {
+                    let p = CGPoint(x: main.frame.midX, y: main.frame.midY)
+                    CGWarpMouseCursorPosition(p)
+                    CGAssociateMouseAndMouseCursorPosition(1)
+                }
+                captureFlow.startRegionCapture()
+                return
+            }
             if CommandLine.arguments.contains("--clip-preview") {
                 clipboardPanel.show()
                 return

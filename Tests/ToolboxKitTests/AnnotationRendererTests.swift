@@ -281,3 +281,136 @@ private func noisyImage(_ size: Int) -> CGImage {
     AnnotationRenderer.render([a], in: ctx, scale: 1, origin: .zero, mosaicSource: nil)
     #expect(inkedColumns(ctx.makeImage()!, atRow: 100) > 0)
 }
+
+@Test func mosaicGridAveragesFaithfully() {
+    // 左半纯黑右半纯白，cell=图像宽度的 1/4 → 前两格应接近黑、后两格接近白。
+    // 任何 alpha/预乘处理错误都会让"黑"变成灰、"白"变成灰。
+    let size = 400
+    let cs = CGColorSpaceCreateDeviceRGB()
+    let src = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8,
+                        bytesPerRow: 0, space: cs,
+                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    src.setFillColor(CGColor(colorSpace: cs, components: [0, 0, 0, 1])!)
+    src.fill(CGRect(x: 0, y: 0, width: size / 2, height: size))
+    src.setFillColor(CGColor(colorSpace: cs, components: [1, 1, 1, 1])!)
+    src.fill(CGRect(x: size / 2, y: 0, width: size / 2, height: size))
+    let image = src.makeImage()!
+
+    let grid = MosaicSource(image: image, scale: 1)
+        .grid(for: CGRect(x: 0, y: 0, width: 400, height: 400), cellPoints: 100)!
+    #expect(grid.columns == 4 && grid.rows == 4)
+    let left = grid.color(col: 0, row: 1)!.luma
+    let right = grid.color(col: 3, row: 1)!.luma
+    #expect(left < 0.12)        // 纯黑那侧
+    #expect(right > 0.88)       // 纯白那侧
+    #expect(grid.color(col: 0, row: 1)!.opacity > 0.99)
+}
+
+@Test func mosaicGridRowZeroIsTheTopOfTheRegion() {
+    // 只在**左上角**放一个黑块。若 grid 的行序被翻转（在 flipped 上下文里 draw
+    // 图像的经典后果），黑格会跑到最后一行 —— 而"格子内部纯色"和"输出与格子一致"
+    // 两条测试都发现不了，因为它们是自洽的，只有对不上**底下的画面**。
+    let size = 400
+    let cs = CGColorSpaceCreateDeviceRGB()
+    let src = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8,
+                        bytesPerRow: 0, space: cs,
+                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    src.setFillColor(CGColor(colorSpace: cs, components: [1, 1, 1, 1])!)
+    src.fill(CGRect(x: 0, y: 0, width: size, height: size))
+    src.setFillColor(CGColor(colorSpace: cs, components: [0, 0, 0, 1])!)
+    src.fill(CGRect(x: 0, y: size - 100, width: 100, height: 100))   // CG 里 y-up → 视觉左上
+    let image = src.makeImage()!
+    #expect(Magnifier.hexColor(of: image, pixelX: 10, pixelY: 10) == "#000000")  // 确认黑在 row 0
+
+    let grid = MosaicSource(image: image, scale: 1)
+        .grid(for: CGRect(x: 0, y: 0, width: 400, height: 400), cellPoints: 100)!
+    #expect(grid.color(col: 0, row: 0)!.luma < 0.12)     // 顶行第一格 = 黑
+    #expect(grid.color(col: 0, row: 3)!.luma > 0.88)     // 底行第一格 = 白
+    #expect(grid.color(col: 3, row: 0)!.luma > 0.88)
+}
+
+@Test func mosaicInOutputMatchesWhatIsUnderneath() {
+    // 端到端：合成图里某个格子的颜色，必须等于**源图同一位置**的颜色。
+    // 这条才是"马赛克盖错了地方"的照妖镜。
+    let size = 400
+    let cs = CGColorSpaceCreateDeviceRGB()
+    let src = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8,
+                        bytesPerRow: 0, space: cs,
+                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    src.setFillColor(CGColor(colorSpace: cs, components: [1, 1, 1, 1])!)
+    src.fill(CGRect(x: 0, y: 0, width: size, height: size))
+    src.setFillColor(CGColor(colorSpace: cs, components: [0, 0, 0, 1])!)
+    src.fill(CGRect(x: 0, y: size - 100, width: 100, height: 100))   // 视觉左上角黑块
+    let image = src.makeImage()!
+
+    let mosaic = Annotation(tool: .mosaic,
+                            points: [CGPoint(x: 0, y: 0), CGPoint(x: 400, y: 400)],
+                            color: .pureBlack, lineWidth: 2)
+    let out = AnnotationCompositor.compose(frozen: image,
+                                           pixelRect: CGRect(x: 0, y: 0, width: size, height: size),
+                                           annotations: [mosaic], scale: 1, selectionOrigin: .zero)!
+    #expect(hex(out, 10, 10)!.lumaValue < 0.12)     // 输出左上仍是黑
+    #expect(hex(out, 390, 390)!.lumaValue > 0.88)   // 输出右下仍是白
+    #expect(hex(out, 390, 10)!.lumaValue > 0.88)    // 右上是白
+    // 而且必须已经分格：黑块边界被抹平成 100pt 的格子，不该还有锐利边缘
+    #expect(hex(out, 60, 60)!.lumaValue < 0.5)
+    #expect(hex(out, 110, 110)!.lumaValue > 0.5)
+}
+
+extension String {
+    /// "#RRGGBB" → 亮度
+    var lumaValue: Double {
+        let chars = Array(dropFirst())
+        func part(_ i: Int) -> Double {
+            Double(Int(String(chars[i..<(i + 2)]), radix: 16) ?? 0) / 255
+        }
+        return 0.2126 * part(0) + 0.7152 * part(2) + 0.0722 * part(4)
+    }
+}
+
+@Test func mosaicErasesThinStrokesLikeText() {
+    // 真实场景就是给文字打码：白底上几条细黑竖线。
+    // 若格子被"透明地"画上去，线会照样看得见 —— 那就是泄露。
+    let size = 400
+    let cs = CGColorSpaceCreateDeviceRGB()
+    let src = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8,
+                        bytesPerRow: 0, space: cs,
+                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    src.setFillColor(CGColor(colorSpace: cs, components: [1, 1, 1, 1])!)
+    src.fill(CGRect(x: 0, y: 0, width: size, height: size))
+    src.setFillColor(CGColor(colorSpace: cs, components: [0, 0, 0, 1])!)
+    for x in stride(from: 20, to: 380, by: 24) {
+        src.fill(CGRect(x: x, y: 100, width: 2, height: 200))
+    }
+    let image = src.makeImage()!
+    #expect(hex(image, 21, 200) == "#000000")     // 确认线上确实是黑的
+
+    let mosaic = Annotation(tool: .mosaic,
+                            points: [CGPoint(x: 0, y: 0), CGPoint(x: 400, y: 400)],
+                            color: .pureBlack, lineWidth: 2)
+    let out = AnnotationCompositor.compose(frozen: image,
+                                           pixelRect: CGRect(x: 0, y: 0, width: size, height: size),
+                                           annotations: [mosaic], scale: 1, selectionOrigin: .zero)!
+    // 打码区里不允许再出现纯黑像素
+    var darkest = 1.0
+    for y in stride(from: 110, to: 290, by: 5) {
+        for x in stride(from: 10, to: 390, by: 3) {
+            darkest = Swift.min(darkest, hex(out, x, y)!.lumaValue)
+        }
+    }
+    #expect(darkest > 0.55)
+}
+
+@Test func mosaicGridIsFullyOpaque() {
+    let frozen = noisyImage(200)
+    let grid = MosaicSource(image: frozen, scale: 1)
+        .grid(for: CGRect(x: 10, y: 10, width: 120, height: 60), cellPoints: 12)!
+    var transparent = 0
+    for row in 0..<grid.rows {
+        for col in 0..<grid.columns where grid.color(col: col, row: col >= 0 ? row : 0)!.opacity < 0.99 {
+            transparent += 1
+        }
+    }
+    #expect(transparent == 0)
+    #expect(grid.rows == 5 && grid.columns == 10)
+}

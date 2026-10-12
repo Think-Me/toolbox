@@ -89,30 +89,28 @@ public enum AnnotationRenderer {
                                    mosaicSource: MosaicSource?) {
         guard let (p0, p1) = endpoints(of: a) else { return }
         let rect = AnnotationGeometry.rect(from: p0, to: p1)
-        let cell = AnnotationPalette.mosaicCellPoints
-        guard let grid = mosaicSource?.grid(for: rect, cellPoints: cell) else {
+        guard let grid = mosaicSource?.grid(for: rect,
+                                            cellPoints: AnnotationPalette.mosaicCellPoints) else {
             // 取不到冻结帧时画一块可见的灰斑。静默什么都不画更糟：
             // 用户以为"打了码"的图直接粘贴出去，就是泄露。
             ctx.setFillColor(NSColor(white: 0.5, alpha: 1).cgColor)
             ctx.fill(rect)
             return
         }
-        var row = 0
-        while CGFloat(row) * cell < rect.height {
-            var col = 0
-            while CGFloat(col) * cell < rect.width {
-                defer { col += 1 }
-                guard let color = grid.color(col: col, row: row) else { continue }
-                let cellRect = CGRect(x: rect.minX + CGFloat(col) * grid.cellPoints,
-                                      y: rect.minY + CGFloat(row) * grid.cellPoints,
-                                      width: grid.cellPoints, height: grid.cellPoints)
-                    .intersection(rect)
-                guard !cellRect.isNull, cellRect.width > 0 else { continue }
-                ctx.setFillColor(color.nsColor.cgColor)
-                ctx.fill(cellRect)
-            }
-            row += 1
+        guard let block = grid.makeImage() else {
+            ctx.setFillColor(NSColor(white: 0.5, alpha: 1).cgColor)
+            ctx.fill(rect)
+            return
         }
+        ctx.saveGState()
+        ctx.interpolationQuality = .none
+        ctx.setShouldAntialias(false)
+        // 本上下文是 y 向下的，而格子图 row 0 = 顶部。翻一次让两者对齐；
+        // 关于 rect 的中线翻转，所以 rect 本身位置不变。
+        ctx.translateBy(x: 0, y: rect.minY + rect.maxY)
+        ctx.scaleBy(x: 1, y: -1)
+        ctx.draw(block, in: rect)
+        ctx.restoreGState()
     }
 
     private static func drawText(_ a: Annotation, in ctx: CGContext) {

@@ -53,6 +53,8 @@ public enum SelectionAction: Equatable {
 
     // MARK: 标注（M3.5）
     case toolChanged(AnnotationTool?)
+    case annotationColor(AnnotationColor)
+    case annotationLineWidth(CGFloat)
     case annotationDown(CGPoint)
     case annotationDragged(CGPoint)
     case annotationUp
@@ -166,6 +168,14 @@ public enum SelectionReducer {
 
         case .toolChanged(let tool):
             s.annotation.setTool(tool)
+
+        case .annotationColor(let c):
+            s.annotation.color = c
+            if var d = s.annotation.draft { d.color = c; s.annotation.draft = d }
+
+        case .annotationLineWidth(let w):
+            s.annotation.lineWidth = w
+            if var d = s.annotation.draft { d.lineWidth = w; s.annotation.draft = d }
 
         case .annotationDown(let p):
             guard let sel = s.rect else { return s }   // 没选区不画

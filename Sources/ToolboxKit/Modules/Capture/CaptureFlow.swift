@@ -8,6 +8,11 @@ import AppKit
 @MainActor
 public final class CaptureFlow {
     private let overlay = SelectionOverlayController()
+    /// 转发给 overlay 的调试接缝
+    public var overlayProbe: (@MainActor (SelectionView) -> Void)? {
+        get { overlay.presentHook }
+        set { overlay.presentHook = newValue }
+    }
     private let pins: PinManager
     private let pasteboard: NSPasteboard
     private let settingsProvider: () -> AppSettings

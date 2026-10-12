@@ -51,6 +51,9 @@ public final class SelectionOverlayController {
     public var magnifierEnabledProvider: () -> Bool = { true }
     public var windowProvider: any WindowCandidateProviding = CGWindowCandidateProvider()
 
+    /// 调试探针用：遮罩视图建好之后回调一次（自动化环境里没法用鼠标键盘操作遮罩）
+    public var presentHook: (@MainActor (SelectionView) -> Void)?
+
     public var isPresenting: Bool { window != nil }
 
     public func present() {
@@ -101,6 +104,7 @@ public final class SelectionOverlayController {
                 self.view = v
                 w.makeKeyAndOrderFront(nil)
                 w.makeFirstResponder(v)
+                self.presentHook?(v)
             } catch let e as CaptureError {
                 self.finish(.failed(Self.describe(e)))
             } catch {

@@ -40,6 +40,9 @@ public struct AnnotationColor: Codable, Equatable, Sendable, Hashable {
     public static let pureWhite = AnnotationColor(red: 1, green: 1, blue: 1)
     public static let pureBlack = AnnotationColor(red: 0, green: 0, blue: 0)
 
+    /// 亮度（0...1），测试与"文字描边对比度"这类判断要用
+    public var luma: Double { 0.2126 * red + 0.7152 * green + 0.0722 * blue }
+
     public var nsColor: NSColor {
         NSColor(srgbRed: CGFloat(red), green: CGFloat(green),
                 blue: CGFloat(blue), alpha: CGFloat(opacity))

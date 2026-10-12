@@ -29,6 +29,9 @@ public final class SelectionView: NSView {
     }
 
     private let strip = ActionStripView()
+    private let toolbar = AnnotationToolbarView()
+    /// 工具条与操作条之间（以及两块面板各自内部）的缝隙
+    private static let rowGap: CGFloat = CaptureToolbarLayout.groupGap
 
     // MARK: M3 交互增强（都可关：有人讨厌吸附，有人嫌放大镜挡视线）
     /// 本屏 flipped 坐标下的可框选窗口，按"从前到后"
@@ -51,7 +54,9 @@ public final class SelectionView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         strip.onAction = { [weak self] kind in self?.stripTapped(kind) }
+        toolbar.onCommand = { [weak self] cmd in self?.toolbarTapped(cmd) }
         addSubview(strip)
+        addSubview(toolbar)
         updateStripVisibility()
     }
 
@@ -107,8 +112,29 @@ public final class SelectionView: NSView {
         ctx.setLineWidth(1)
         ctx.stroke(sel.integral)
 
+        drawAnnotations(sel, in: ctx)
         drawHandles(sel, in: ctx)
         drawSizeLabel(sel)
+    }
+
+    /// 已完成的标注 + 正在拖的这一笔，裁剪到选区内绘制。
+    /// 预览必须走 AnnotationRenderer（和导出同一个函数）：
+    /// 两条路径的话"预览好看、导出走样"永远查不清。
+    private func drawAnnotations(_ sel: CGRect, in ctx: CGContext) {
+        var list = state.annotation.annotations
+        if let d = state.annotation.draft {
+            list.append(Annotation(tool: d.tool, points: d.points, color: d.color,
+                                   lineWidth: d.lineWidth, fontSize: d.fontSize,
+                                   filled: d.filled))
+        }
+        guard !list.isEmpty else { return }
+        ctx.saveGState()
+        // 裁剪到选区：标注只能出现在选区内，越界部分不该露出来
+        ctx.clip(to: sel)
+        let source = frozenPixels.map { MosaicSource(image: $0, scale: screenScale) }
+        AnnotationRenderer.render(list, in: ctx, scale: 1, origin: .zero,
+                                  mosaicSource: source)
+        ctx.restoreGState()
     }
 
     /// idle 时把光标下的窗口用虚线框出来，提示"这一下点下去会框住整个窗口"。
@@ -254,6 +280,13 @@ public final class SelectionView: NSView {
         return SelectionSnapping.targets(windows: windowCandidates, screen: bounds)
     }
 
+    /// 调试探针用：不经过鼠标键盘，把一串 action 走**同一个 reducer** 摆好状态。
+    /// 之所以用真 action 而不是直接塞 state：这样探针验证的就是实际交互路径，
+    /// 免得"探针能显示、真点却坏了"。
+    public func applyForProbe(_ actions: [SelectionAction]) {
+        for a in actions { reduce(a) }
+    }
+
     private func reduce(_ action: SelectionAction) {
         logEvent("reduce \(action) → phase=\(String(describing: state.phase)) rect=\(String(describing: state.rect))")
         state = SelectionReducer.reduce(state, action, bounds: bounds, snap: snapTargets)
@@ -304,6 +337,8 @@ public final class SelectionView: NSView {
         case UInt16(kVK_DownArrow): reduce(shift ? .resizeNudge(dx: 0, dy: 1) : .nudge(dx: 0, dy: 1))
         case UInt16(kVK_ANSI_C) where event.modifierFlags.contains(.command): commit(.copy)
         case UInt16(kVK_ANSI_S) where event.modifierFlags.contains(.command): commit(.save)
+        case UInt16(kVK_ANSI_Z) where event.modifierFlags.contains(.command):
+            reduce(event.modifierFlags.contains(.shift) ? .redoAnnotation : .undoAnnotation)
         default: break
         }
     }
@@ -341,13 +376,57 @@ public final class SelectionView: NSView {
     }
 
     private func updateStripVisibility() {
-        strip.isHidden = !state.canCommit
+        let show = state.canCommit
+        strip.isHidden = !show
+        toolbar.isHidden = !show
+        if show {
+            toolbar.update(selectedTool: state.annotation.tool,
+                           color: state.annotation.color,
+                           lineWidth: state.annotation.lineWidth,
+                           canUndo: state.annotation.canUndo,
+                           canRedo: state.annotation.canRedo,
+                           hasAnnotations: !state.annotation.annotations.isEmpty)
+        }
+        updateCursor()
+    }
+
+    private func updateCursor() {
+        // 活动工具下要换成分划线：用户得知道这一下拖拽是画标注而不是改选区
+        if let w = window { w.invalidateCursorRects(for: self) }
+    }
+
+    override public func resetCursorRects() {
+        if state.annotation.isActive {
+            addCursorRect(bounds, cursor: .crosshair)
+        } else {
+            super.resetCursorRects()
+        }
+    }
+
+    private func toolbarTapped(_ cmd: AnnotationToolbarView.Command) {
+        switch cmd {
+        case .tool(let t):
+            // 再点一次当前工具 = 退出标注，回到"拖拽改选区"
+            reduce(.toolChanged(state.annotation.tool == t ? nil : t))
+        case .color(let c): reduce(.annotationColor(c))
+        case .lineWidth(let w): reduce(.annotationLineWidth(w))
+        case .undo: reduce(.undoAnnotation)
+        case .redo: reduce(.redoAnnotation)
+        case .clear: reduce(.clearAnnotations)
+        }
     }
 
     private func positionStrip() {
-        guard let sel = state.rect else { strip.frame = .zero; return }
-        strip.frame = SelectionGeometry.stripFrame(for: sel, strip: stripSize,
-                                                   container: bounds)
+        guard let sel = state.rect else {
+            strip.frame = .zero
+            toolbar.frame = .zero
+            return
+        }
+        let row = CaptureToolbarLayout.layout(annotationWidth: toolbar.idealSize.width,
+                                              actionWidth: stripSize.width,
+                                              selection: sel, container: bounds)
+        toolbar.frame = row.annotationBar
+        strip.frame = row.actionBar
     }
 }
 

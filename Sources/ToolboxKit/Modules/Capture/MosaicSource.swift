@@ -46,17 +46,20 @@ public struct MosaicSource: Sendable {
                                   bytesPerRow: cols * 4, space: cs,
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         else { return nil }
-        // 顶原点，好让第 0 行就是最上面那格
-        ctx.translateBy(x: 0, y: CGFloat(rows)); ctx.scaleBy(x: 1, y: -1)
         ctx.interpolationQuality = .high
-        // 关键：目标尺寸用**分数** width/cell。
-        // 若铺满整数 cols，CoreGraphics 会把源均匀重采样成 cols 份，
-        // 每格实际覆盖 width/cols ≠ cell，渲染时格子就和取色错位了。
-        ctx.draw(src, in: CGRect(x: 0, y: 0,
-                                 width: rect.width / cell, height: rect.height / cell))
+        // 铺满整个 cols×rows 上下文，且**不要**翻转：
+        // y-up 下 draw 会把图像顶行放到 rect.maxY，也就是位图的 memory row 0，
+        // 于是"grid 的第 0 行 = 区域顶部"自然成立。
+        // 之前先 scaleBy(1,-1) 再 draw 就把格子整体上下翻了 —— 在渐变背景上
+        // 表现为"马赛克比周围浅"，而且自洽的测试全都发现不了。
+        ctx.draw(src, in: CGRect(x: 0, y: 0, width: CGFloat(cols), height: CGFloat(rows)))
         guard let data = ctx.data else { return nil }
         let bytes = [UInt8](UnsafeRawBufferPointer(start: data, count: cols * rows * 4))
-        return MosaicGrid(rect: rect, cellPoints: cell, columns: cols, rows: rows, bytes: bytes)
+        // 有效格子尺寸：区域不能整除时让每格略小于目标值，
+        // 好让格子严丝合缝铺满选区。留一条没打码的窄边就是泄露。
+        return MosaicGrid(rect: rect, cellSize: CGSize(width: rect.width / CGFloat(cols),
+                                                       height: rect.height / CGFloat(rows)),
+                          columns: cols, rows: rows, bytes: bytes)
     }
 
     private func pixelCrop(of rect: CGRect) -> CGImage? {
@@ -69,23 +72,43 @@ public struct MosaicSource: Sendable {
 /// 分格后的均值颜色图。索引从左上角开始。
 public struct MosaicGrid: Sendable {
     public let rect: CGRect
-    public let cellPoints: CGFloat
+    /// 有效格子尺寸（宽/高可不同；区域不整除时略小于请求值）
+    public let cellSize: CGSize
     public let columns: Int
     public let rows: Int
     private let bytes: [UInt8]
 
-    init(rect: CGRect, cellPoints: CGFloat, columns: Int, rows: Int, bytes: [UInt8]) {
-        self.rect = rect; self.cellPoints = cellPoints
+    init(rect: CGRect, cellSize: CGSize, columns: Int, rows: Int, bytes: [UInt8]) {
+        self.rect = rect; self.cellSize = cellSize
         self.columns = columns; self.rows = rows; self.bytes = bytes
     }
 
     /// 某 point 坐标落在哪一格
     public func cellIndex(at p: CGPoint) -> (col: Int, row: Int)? {
-        guard p.x >= rect.minX, p.y >= rect.minY else { return nil }
-        let col = Int((p.x - rect.minX) / cellPoints)
-        let row = Int((p.y - rect.minY) / cellPoints)
+        guard p.x >= rect.minX, p.y >= rect.minY, cellSize.width > 0, cellSize.height > 0
+        else { return nil }
+        let col = Int((p.x - rect.minX) / cellSize.width)
+        let row = Int((p.y - rect.minY) / cellSize.height)
         guard col < columns, row < rows else { return nil }
         return (col, row)
+    }
+
+    /// 格子图（memory row 0 = 区域顶部）。
+    /// 渲染时**整张最近邻放大**一次画出，而不是逐格 fill：
+    /// 区域不能整除时格子是分数尺寸，逐格 fill 会在每格边界留下 1px 抗锯齿
+    /// 半透明缝（实测同一片马赛克里冒出 600+ 种颜色），关掉抗锯齿又会留下
+    /// 1px 谁都没填的缝 —— 那 1px 就是没打码的原图。
+    public func makeImage() -> CGImage? {
+        // 必须用 CFData 版：`CGDataProvider(dataInfo:data:bytes.count:releaseData:)`
+        // 传 Swift 数组时，隐式转换出来的指针**只在那次调用期间有效**，
+        // provider 又不持有这块内存，之后 draw 读到的就是悬垂指针（实测多半是
+        // 已复用的零 → RGBA(0,0,0,0) 全透明 → 马赛克"画了但看不见"）。
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
+        return CGImage(width: columns, height: rows, bitsPerComponent: 8, bitsPerPixel: 32,
+                       bytesPerRow: columns * 4, space: CGColorSpaceCreateDeviceRGB(),
+                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                       provider: provider, decode: nil, shouldInterpolate: false,
+                       intent: .defaultIntent)
     }
 
     public func color(col: Int, row: Int) -> AnnotationColor? {
