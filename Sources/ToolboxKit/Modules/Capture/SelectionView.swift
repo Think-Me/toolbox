@@ -404,6 +404,14 @@ public final class SelectionView: NSView {
 
     private static let maxEditingWidth: CGFloat = 520
 
+    /// 遮罩收口时调用。不提交内容，只保证"编辑器不留存、热键不悬空"。
+    public func closeEditorForDismiss() {
+        guard textEditor != nil else { return }
+        textEditor?.removeFromSuperview()
+        textEditor = nil
+        needsDisplay = true
+    }
+
     private func endTextEditing(commit: Bool) {
         guard let f = textEditor else { return }
         textEditor = nil
@@ -429,6 +437,7 @@ public final class SelectionView: NSView {
     // MARK: 操作条
 
     private func stripTapped(_ kind: ActionStripView.Kind) {
+        if textEditor != nil { endTextEditing(commit: true) }
         switch kind {
         case .copy: commit(.copy)
         case .pin: commit(.pin)
@@ -477,6 +486,9 @@ public final class SelectionView: NSView {
     }
 
     private func toolbarTapped(_ cmd: AnnotationToolbarView.Command) {
+        // 正在打字时点工具条 = 先提交这行字。否则输入框会僵在原处，
+        // 而且热键挂起状态会被拖长到不可预期的时刻
+        if textEditor != nil { endTextEditing(commit: true) }
         switch cmd {
         case .tool(let t):
             // 再点一次当前工具 = 退出标注，回到"拖拽改选区"
