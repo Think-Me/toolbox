@@ -66,6 +66,8 @@ public final class SelectionView: NSView {
         wantsLayer = true
         strip.onAction = { [weak self] kind in self?.stripTapped(kind) }
         toolbar.onCommand = { [weak self] cmd in self?.toolbarTapped(cmd) }
+        // 字号组出现/收起会改变工具条宽度，整行必须重新居中
+        toolbar.onWidthChanged = { [weak self] in self?.positionStrip() }
         addSubview(strip)
         addSubview(toolbar)
         updateStripVisibility()
@@ -478,6 +480,7 @@ public final class SelectionView: NSView {
             toolbar.update(selectedTool: state.annotation.tool,
                            color: state.annotation.color,
                            lineWidth: state.annotation.lineWidth,
+                           fontSize: state.annotation.fontSize,
                            canUndo: state.annotation.canUndo,
                            canRedo: state.annotation.canRedo,
                            hasAnnotations: !state.annotation.annotations.isEmpty)
@@ -508,6 +511,7 @@ public final class SelectionView: NSView {
             reduce(.toolChanged(state.annotation.tool == t ? nil : t))
         case .color(let c): reduce(.annotationColor(c))
         case .lineWidth(let w): reduce(.annotationLineWidth(w))
+        case .fontSize(let s): reduce(.annotationFontSize(s))
         case .undo: reduce(.undoAnnotation)
         case .redo: reduce(.redoAnnotation)
         case .clear: reduce(.clearAnnotations)
@@ -519,7 +523,7 @@ public final class SelectionView: NSView {
         // 曾经这么写过，配合"idealSize 读 frame.size"就把按钮宽度永久归零了
         guard let sel = state.rect else { return }
         // 用设置值而不是 toolbar.isHidden：布局不该依赖"这一趟有没有正好更新过可见性"
-        let barWidth: CGFloat = annotationDefaults.toolbarEnabled ? toolbar.idealSize.width : 0
+        let barWidth: CGFloat = annotationDefaults.toolbarEnabled ? toolbar.visibleWidth : 0
         let row = CaptureToolbarLayout.layout(annotationWidth: barWidth,
                                               actionWidth: stripSize.width,
                                               selection: sel, container: bounds)

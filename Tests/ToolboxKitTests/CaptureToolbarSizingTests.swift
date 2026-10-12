@@ -50,3 +50,49 @@ import Testing
     #expect(row.annotationBar.width > 0 && row.actionBar.width > 0)
     #expect(row.annotationBar.minY == row.actionBar.minY)
 }
+
+@MainActor
+@Test func fontGroupOnlyOccupiesWidthWhenTextToolActive() {
+    // 字号组只在文字工具激活时出现。隐藏时必须从行宽里扣掉，
+    // 否则其他工具下整行会白宽一截、操作条也跟着偏
+    let bar = AnnotationToolbarView()
+    let full = bar.idealSize.width
+    bar.update(selectedTool: .text, color: AnnotationPalette.defaultColor,
+               lineWidth: 4, fontSize: 18, canUndo: false, canRedo: false,
+               hasAnnotations: false)
+    #expect(bar.visibleWidth == full)
+    bar.update(selectedTool: .rect, color: AnnotationPalette.defaultColor,
+               lineWidth: 4, fontSize: 18, canUndo: false, canRedo: false,
+               hasAnnotations: false)
+    #expect(bar.visibleWidth < full)
+    #expect(bar.visibleWidth > 0)
+    // 切回文字工具要能拿回原宽（扣掉的量必须可逆）
+    bar.update(selectedTool: .text, color: AnnotationPalette.defaultColor,
+               lineWidth: 4, fontSize: 18, canUndo: false, canRedo: false,
+               hasAnnotations: false)
+    #expect(bar.visibleWidth == full)
+}
+
+@MainActor
+@Test func rowUsesVisibleWidthNotIdealWidth() {
+    let bar = AnnotationToolbarView()
+    let strip = ActionStripView()
+    bar.update(selectedTool: .mosaic, color: AnnotationPalette.defaultColor,
+               lineWidth: 4, fontSize: 18, canUndo: true, canRedo: false,
+               hasAnnotations: true)
+    let off = CaptureToolbarLayout.layout(annotationWidth: bar.visibleWidth,
+                                          actionWidth: strip.idealSize.width,
+                                          selection: CGRect(x: 400, y: 200, width: 300, height: 200),
+                                          container: CGRect(x: 0, y: 0, width: 1512, height: 982))
+    bar.update(selectedTool: .text, color: AnnotationPalette.defaultColor,
+               lineWidth: 4, fontSize: 18, canUndo: true, canRedo: false,
+               hasAnnotations: true)
+    let on = CaptureToolbarLayout.layout(annotationWidth: bar.visibleWidth,
+                                         actionWidth: strip.idealSize.width,
+                                         selection: CGRect(x: 400, y: 200, width: 300, height: 200),
+                                         container: CGRect(x: 0, y: 0, width: 1512, height: 982))
+    #expect(on.annotationBar.width > off.annotationBar.width)
+    // 操作条始终紧跟在工具条后面，中间只有一个缝隙
+    #expect(on.actionBar.minX - on.annotationBar.maxX == CaptureToolbarLayout.groupGap)
+    #expect(off.actionBar.minX - off.annotationBar.maxX == CaptureToolbarLayout.groupGap)
+}

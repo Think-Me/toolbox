@@ -83,26 +83,15 @@ public struct MosaicGrid: Sendable {
         self.columns = columns; self.rows = rows; self.bytes = bytes
     }
 
-    /// 某 point 坐标落在哪一格
-    public func cellIndex(at p: CGPoint) -> (col: Int, row: Int)? {
-        guard p.x >= rect.minX, p.y >= rect.minY, cellSize.width > 0, cellSize.height > 0
-        else { return nil }
-        let col = Int((p.x - rect.minX) / cellSize.width)
-        let row = Int((p.y - rect.minY) / cellSize.height)
-        guard col < columns, row < rows else { return nil }
-        return (col, row)
-    }
-
     /// 格子图（memory row 0 = 区域顶部）。
     /// 渲染时**整张最近邻放大**一次画出，而不是逐格 fill：
     /// 区域不能整除时格子是分数尺寸，逐格 fill 会在每格边界留下 1px 抗锯齿
     /// 半透明缝（实测同一片马赛克里冒出 600+ 种颜色），关掉抗锯齿又会留下
     /// 1px 谁都没填的缝 —— 那 1px 就是没打码的原图。
     public func makeImage() -> CGImage? {
-        // 必须用 CFData 版：`CGDataProvider(dataInfo:data:bytes.count:releaseData:)`
-        // 传 Swift 数组时，隐式转换出来的指针**只在那次调用期间有效**，
-        // provider 又不持有这块内存，之后 draw 读到的就是悬垂指针（实测多半是
-        // 已复用的零 → RGBA(0,0,0,0) 全透明 → 马赛克"画了但看不见"）。
+        // 必须用 CFData 版：`CGDataProvider(dataInfo:data:bytes…) ` 传 Swift 数组时
+        // 指针只在那次调用期间有效，provider 又不持有内存，之后 draw 读到的是
+        // 悬垂指针（实测表现为"马赛克画了但看不见"，而单测可能假通过）
         guard let provider = CGDataProvider(data: Data(bytes) as CFData) else { return nil }
         return CGImage(width: columns, height: rows, bitsPerComponent: 8, bitsPerPixel: 32,
                        bytesPerRow: columns * 4, space: CGColorSpaceCreateDeviceRGB(),

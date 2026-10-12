@@ -1,6 +1,6 @@
 import AppKit
 
-/// 标注工具条：5 工具 │ 6 颜色 │ 3 线宽 │ 撤销 重做 清空。
+/// 标注工具条：5 工具 │ 6 颜色 │ 3 线宽 │ [3 字号] │ 撤销 重做 清空。
 ///
 /// 和操作条（复制/钉图/存盘…）排在**同一行**（用户明确要求），
 /// 行内两块面板由 `CaptureToolbarLayout` 定位。
@@ -14,11 +14,15 @@ public final class AnnotationToolbarView: NSView {
         case tool(AnnotationTool)
         case color(AnnotationColor)
         case lineWidth(CGFloat)
+        case fontSize(CGFloat)
         case undo
         case redo
         case clear
     }
     public var onCommand: ((Command) -> Void)?
+    /// 宽度变化时回调（字号组只在文字工具下出现，行宽随之变化，
+    /// 外层必须重新定位整行，否则操作条会偏离选区中线）
+    public var onWidthChanged: (() -> Void)?
 
     private static let h: CGFloat = 32
     private static let edge: CGFloat = 6
@@ -39,10 +43,12 @@ public final class AnnotationToolbarView: NSView {
     private var toolButtons: [(AnnotationTool, NSButton)] = []
     private var colorButtons: [(AnnotationColor, NSButton)] = []
     private var widthButtons: [(CGFloat, NSButton)] = []
-    private var undoButton: NSButton!
-    private var redoButton: NSButton!
-    private var clearButton: NSButton!
+    private var fontButtons: [(CGFloat, NSButton)] = []
+    private var historyButtons: [NSButton] = []
+    private var separators: [NSView] = []
     private var actions: [ObjectIdentifier: Command] = [:]
+    private var showsFontGroup = false
+    private var currentWidth: CGFloat = 0
 
     public init() {
         super.init(frame: .zero)
@@ -51,53 +57,54 @@ public final class AnnotationToolbarView: NSView {
         layer?.cornerRadius = 7
         layer?.borderColor = NSColor(calibratedWhite: 0.42, alpha: 1).cgColor
         layer?.borderWidth = 1
-
-        var x = Self.edge
-        x = placeTools(from: x)
-        x = placeSeparator(from: x)
-        x = placeColors(from: x)
-        x = placeSeparator(from: x)
-        x = placeWidths(from: x)
-        x = placeSeparator(from: x)
-        x = placeHistory(from: x)
-        x += Self.edge
-
-        intrinsicWidth = x
-        frame.size = CGSize(width: x, height: Self.h)
+        buildButtons()
+        relayout()
     }
-
-    /// 同 ActionStripView：固有宽度不能从 frame.size 反推，见那边的注释。
-    /// 用 var 是 Swift 的定值初始化规则：init 里调了实例方法之后再给 let 赋值会报错
-    private var intrinsicWidth: CGFloat = 0
 
     required init?(coder: NSCoder) { fatalError("不支持从 nib 构造") }
 
-    public var idealSize: CGSize { CGSize(width: intrinsicWidth, height: Self.h) }
+    /// 全部组都显示时的宽度（字号组隐藏时会更窄，见 visibleWidth）
+    public var idealSize: CGSize {
+        CGSize(width: Self.fullWidth(fontShown: true), height: Self.h)
+    }
 
-    // MARK: 排布
+    /// 当前**实际占位**宽度。布局用它，不能用 idealSize：
+    /// 否则非文字工具下整行白宽一截，操作条跟着偏
+    public var visibleWidth: CGFloat { currentWidth }
 
-    private func placeTools(from startX: CGFloat) -> CGFloat {
-        var x = startX
+    private static func fullWidth(fontShown: Bool) -> CGFloat {
+        // 各组按钮数与间距；顺序必须和 relayout 里一致
+        var groups: [(count: Int, pitch: CGFloat)] = [
+            (AnnotationTool.allCases.count, toolPitch),
+            (colors_count, dotPitch),
+            (lineWidths_count, toolPitch),
+        ]
+        if fontShown { groups.append((fontSizes_count, toolPitch)) }
+        groups.append((3, toolPitch))          // 撤销 / 重做 / 清空
+        var width = edge * 2
+        for (i, g) in groups.enumerated() {
+            if i > 0 { width += sepWidth }
+            width += CGFloat(g.count) * g.pitch
+        }
+        return width
+    }
+
+    private static var colors_count: Int { AnnotationPalette.colors.count }
+    private static var lineWidths_count: Int { AnnotationPalette.lineWidths.count }
+    private static var fontSizes_count: Int { AnnotationPalette.fontSizes.count }
+
+    // MARK: 建按钮（只建一次，位置交给 relayout）
+
+    private func buildButtons() {
         for tool in AnnotationTool.allCases {
             let (symbol, label) = toolSymbols[tool] ?? ("questionmark", tool.rawValue)
             let b = makeButton(symbol: symbol, label: label,
-                               hint: "\(label)（再点一次回到选区拖拽）", pitch: Self.toolPitch)
-            b.frame = CGRect(x: x + (Self.toolPitch - Self.buttonH) / 2,
-                             y: (Self.h - Self.buttonH) / 2, width: Self.buttonH, height: Self.buttonH)
+                               hint: "\(label)（再点一次回到选区拖拽）")
             actions[ObjectIdentifier(b)] = .tool(tool)
-            addSubview(b)
             toolButtons.append((tool, b))
-            x += Self.toolPitch
         }
-        return x
-    }
-
-    private func placeColors(from startX: CGFloat) -> CGFloat {
-        var x = startX
         for color in AnnotationPalette.colors {
-            let b = NSButton(frame: CGRect(x: x + (Self.dotPitch - Self.dotSize) / 2,
-                                           y: (Self.h - Self.dotSize) / 2,
-                                           width: Self.dotSize, height: Self.dotSize))
+            let b = NSButton(frame: .zero)
             b.isBordered = false
             b.title = ""
             b.setButtonType(.momentaryChange)
@@ -111,76 +118,148 @@ public final class AnnotationToolbarView: NSView {
             b.layer?.borderWidth = 1
             actions[ObjectIdentifier(b)] = .color(color)
             colorButtons.append((color, b))
-            addSubview(b)
-            x += Self.dotPitch
         }
-        return x
-    }
-
-    private func placeWidths(from startX: CGFloat) -> CGFloat {
-        var x = startX
         for w in AnnotationPalette.lineWidths {
-            let b = NSButton(frame: CGRect(x: x + (Self.toolPitch - Self.buttonH) / 2,
-                                           y: (Self.h - Self.buttonH) / 2,
-                                           width: Self.buttonH, height: Self.buttonH))
-            b.isBordered = false
-            b.title = ""
-            b.imagePosition = .imageOnly
-            b.setButtonType(.momentaryChange)
-            b.target = self
-            b.action = #selector(tapped(_:))
-            b.toolTip = "线宽 \(Int(w))"
-            b.image = Self.lineImage(thickness: w)
-            b.contentTintColor = NSColor(calibratedWhite: 0.9, alpha: 1)
-            b.wantsLayer = true
-            b.layer?.cornerRadius = 5
+            let b = makeImageButton(hint: "线宽 \(Int(w))", image: Self.lineImage(thickness: w))
             actions[ObjectIdentifier(b)] = .lineWidth(w)
             widthButtons.append((w, b))
-            addSubview(b)
-            x += Self.toolPitch
         }
-        return x
+        for size in AnnotationPalette.fontSizes {
+            let b = makeImageButton(hint: "字号 \(Int(size)) pt",
+                                    image: Self.glyphImage(pointSize: size))
+            actions[ObjectIdentifier(b)] = .fontSize(size)
+            fontButtons.append((size, b))
+        }
+        let history: [(String, String, Command)] = [
+            ("arrow.uturn.backward", "撤销 (⌘Z)", .undo),
+            ("arrow.uturn.forward", "重做 (⇧⌘Z)", .redo),
+            ("trash", "清空全部标注（可撤销）", .clear),
+        ]
+        for (symbol, hint, cmd) in history {
+            let b = makeButton(symbol: symbol, label: hint, hint: hint)
+            actions[ObjectIdentifier(b)] = cmd
+            historyButtons.append(b)
+        }
+        // 最多 5 组 → 4 条分隔条。少一组时多出来的那条挪到看不见的地方
+        for _ in 0..<4 {
+            let v = NSView(frame: .zero)
+            v.wantsLayer = true
+            v.layer?.backgroundColor = NSColor(calibratedWhite: 0.42, alpha: 0.8).cgColor
+            separators.append(v)
+        }
+        for b in toolButtons.map(\.1) { addSubview(b) }
+        for b in colorButtons.map(\.1) { addSubview(b) }
+        for b in widthButtons.map(\.1) { addSubview(b) }
+        for b in fontButtons.map(\.1) { addSubview(b) }
+        for b in historyButtons { addSubview(b) }
+        for v in separators { addSubview(v) }
     }
 
-    private func placeHistory(from startX: CGFloat) -> CGFloat {
-        var x = startX
-        undoButton = makeButton(symbol: "arrow.uturn.backward", label: "撤销",
-                                hint: "撤销 (⌘Z)", pitch: Self.toolPitch)
-        undoButton.frame = CGRect(x: x + (Self.toolPitch - Self.buttonH) / 2,
-                                  y: (Self.h - Self.buttonH) / 2,
-                                  width: Self.buttonH, height: Self.buttonH)
-        actions[ObjectIdentifier(undoButton)] = .undo
-        addSubview(undoButton)
-        x += Self.toolPitch
-        redoButton = makeButton(symbol: "arrow.uturn.forward", label: "重做",
-                                hint: "重做 (⇧⌘Z)", pitch: Self.toolPitch)
-        redoButton.frame = CGRect(x: x + (Self.toolPitch - Self.buttonH) / 2,
-                                  y: (Self.h - Self.buttonH) / 2,
-                                  width: Self.buttonH, height: Self.buttonH)
-        actions[ObjectIdentifier(redoButton)] = .redo
-        addSubview(redoButton)
-        x += Self.toolPitch
-        clearButton = makeButton(symbol: "trash", label: "清空",
-                                 hint: "清空全部标注（可撤销）", pitch: Self.toolPitch)
-        clearButton.frame = CGRect(x: x + (Self.toolPitch - Self.buttonH) / 2,
-                                   y: (Self.h - Self.buttonH) / 2,
-                                   width: Self.buttonH, height: Self.buttonH)
-        actions[ObjectIdentifier(clearButton)] = .clear
-        addSubview(clearButton)
-        return x + Self.toolPitch
+    // MARK: 布局
+
+    /// 按当前该显示哪几组重排所有按钮。
+    /// **不能只改 frame 宽度来"隐藏"中间的组** —— 那会把后面的组裁掉
+    /// （实测撤销/重做/清空整组消失）。
+    private func relayout() {
+        var groups: [[NSButton]] = [toolButtons.map(\.1), colorButtons.map(\.1),
+                                    widthButtons.map(\.1)]
+        var pitches: [CGFloat] = [Self.toolPitch, Self.dotPitch, Self.toolPitch]
+        if showsFontGroup {
+            groups.append(fontButtons.map(\.1))
+            pitches.append(Self.toolPitch)
+        }
+        groups.append(historyButtons.map { $0 })
+        pitches.append(Self.toolPitch)
+
+        var x = Self.edge
+        for (i, group) in groups.enumerated() {
+            if i > 0 {
+                placeSeparator(at: x, index: i - 1)
+                x += Self.sepWidth
+            }
+            let pitch = pitches[i]
+            for b in group {
+                b.frame = CGRect(x: x + (pitch - Self.buttonH) / 2,
+                                 y: (Self.h - Self.buttonH) / 2,
+                                 width: Self.buttonH, height: Self.buttonH)
+                x += pitch
+            }
+        }
+        // 用不到的分隔条挪到看不见的地方而不是删掉：删了下次还要重建
+        if separators.count > groups.count - 1 {
+            for extra in separators[(groups.count - 1)...] {
+                extra.frame = CGRect(x: 0, y: Self.h, width: 1, height: 0)
+            }
+        }
+        currentWidth = x + Self.edge
+        frame.size = CGSize(width: currentWidth, height: Self.h)
+        // 不参与排布的组必须**显式隐藏**：只"不给它位置"的话，
+        // 按钮会留在上一次的坐标上，实测表现为非文字工具下混进一个字号按钮
+        for b in fontButtons.map(\.1) { b.isHidden = !showsFontGroup }
     }
 
-    private func placeSeparator(from startX: CGFloat) -> CGFloat {
-        let v = NSView(frame: CGRect(x: startX + Self.sepWidth / 2 - 0.5,
-                                     y: (Self.h - 16) / 2, width: 1, height: 16))
-        v.wantsLayer = true
-        v.layer?.backgroundColor = NSColor(calibratedWhite: 0.42, alpha: 0.8).cgColor
-        addSubview(v)
-        return startX + Self.sepWidth
+    private func placeSeparator(at x: CGFloat, index: Int) {
+        guard index < separators.count else { return }
+        separators[index].frame = CGRect(x: x + Self.sepWidth / 2 - 0.5,
+                                         y: (Self.h - 16) / 2, width: 1, height: 16)
     }
 
-    private func makeButton(symbol: String, label: String, hint: String,
-                            pitch: CGFloat) -> NSButton {
+    // MARK: 状态回显
+
+    public func update(selectedTool: AnnotationTool?, color: AnnotationColor,
+                       lineWidth: CGFloat, fontSize: CGFloat,
+                       canUndo: Bool, canRedo: Bool, hasAnnotations: Bool) {
+        let showFont = selectedTool == .text
+        if showFont != showsFontGroup {
+            showsFontGroup = showFont
+            relayout()
+            onWidthChanged?()
+        }
+        for (tool, b) in toolButtons {
+            let on = tool == selectedTool
+            b.layer?.backgroundColor = on
+                ? NSColor(calibratedWhite: 0.95, alpha: 0.28).cgColor : NSColor.clear.cgColor
+            b.contentTintColor = on ? .white : NSColor(calibratedWhite: 0.8, alpha: 1)
+        }
+        for (c, b) in colorButtons {
+            let on = c == color
+            b.layer?.borderColor = (on ? NSColor.white
+                    : NSColor(calibratedWhite: 0.1, alpha: 0.9)).cgColor
+            b.layer?.borderWidth = on ? 2 : 1
+        }
+        for (sz, b) in fontButtons {
+            highlight(b, on: abs(sz - fontSize) < 0.01)
+        }
+        for (w, b) in widthButtons {
+            highlight(b, on: abs(w - lineWidth) < 0.01)
+        }
+        // isEnabled=false 对 isBordered=false 的模板图按钮几乎没有视觉差别，
+        // 必须自己压暗：否则用户分不清"没有可撤销的了"和"撤销按钮坏了"
+        undoButton?.isEnabled = canUndo
+        redoButton?.isEnabled = canRedo
+        clearButton?.isEnabled = hasAnnotations
+        undoButton?.contentTintColor = tint(canUndo)
+        redoButton?.contentTintColor = tint(canRedo)
+        clearButton?.contentTintColor = tint(hasAnnotations)
+    }
+
+    private func highlight(_ b: NSButton, on: Bool) {
+        b.layer?.backgroundColor = on
+            ? NSColor(calibratedWhite: 0.95, alpha: 0.28).cgColor : NSColor.clear.cgColor
+        b.contentTintColor = on ? .white : NSColor(calibratedWhite: 0.9, alpha: 1)
+    }
+
+    private func tint(_ enabled: Bool) -> NSColor {
+        NSColor(calibratedWhite: 0.88, alpha: enabled ? 1 : 0.32)
+    }
+
+    private var undoButton: NSButton? { historyButtons.first }
+    private var redoButton: NSButton? { historyButtons.count > 1 ? historyButtons[1] : nil }
+    private var clearButton: NSButton? { historyButtons.count > 2 ? historyButtons[2] : nil }
+
+    // MARK: 按钮工厂
+
+    private func makeButton(symbol: String, label: String, hint: String) -> NSButton {
         let b = NSButton(frame: .zero)
         b.isBordered = false
         b.bezelStyle = .regularSquare
@@ -199,14 +278,20 @@ public final class AnnotationToolbarView: NSView {
         return b
     }
 
+    private func makeImageButton(hint: String, image: NSImage) -> NSButton {
+        let b = makeButton(symbol: "", label: hint, hint: hint)
+        b.image = image
+        return b
+    }
+
     /// 线宽按钮的图：自己画的模板图，靠 contentTintColor 上色。
-    /// 不用 SF Symbol 的 "line.horizontal.3" 之类：那些符号的粗细和我要的 2/4/8 对不上。
+    /// 不用 SF Symbol 的线：那些符号的粗细和我要的 2/4/8 对不上
     private static func lineImage(thickness: CGFloat) -> NSImage {
         let size = NSSize(width: 18, height: 14)
         let img = NSImage(size: size, flipped: false) { rect in
             NSColor.black.setStroke()
             let p = NSBezierPath()
-            // 钳到图内：8pt 线在 14pt 高的图里刚好，再大就会被裁掉变成"看不见"
+            // 钳到图内：再大就会被裁掉变成"看不见"
             p.lineWidth = Swift.min(thickness, rect.height - 2)
             p.lineCapStyle = .round
             p.move(to: NSPoint(x: 2, y: rect.midY))
@@ -218,41 +303,22 @@ public final class AnnotationToolbarView: NSView {
         return img
     }
 
-    // MARK: 状态回显
-
-    public func update(selectedTool: AnnotationTool?, color: AnnotationColor,
-                       lineWidth: CGFloat, canUndo: Bool, canRedo: Bool,
-                       hasAnnotations: Bool) {
-        for (tool, b) in toolButtons {
-            let on = tool == selectedTool
-            b.layer?.backgroundColor = on
-                ? NSColor(calibratedWhite: 0.95, alpha: 0.28).cgColor : NSColor.clear.cgColor
-            b.contentTintColor = on ? .white : NSColor(calibratedWhite: 0.8, alpha: 1)
+    /// "A" 字形模板图。字号差异必须一眼看得出来
+    private static func glyphImage(pointSize: CGFloat) -> NSImage {
+        let side: CGFloat = 20
+        let img = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: Swift.min(pointSize, side - 3), weight: .semibold),
+                .foregroundColor: NSColor.black,
+            ]
+            let s = "A" as NSString
+            let sz = s.size(withAttributes: attrs)
+            s.draw(at: NSPoint(x: (rect.width - sz.width) / 2, y: (rect.height - sz.height) / 2),
+                   withAttributes: attrs)
+            return true
         }
-        for (c, b) in colorButtons {
-            let on = c == color
-            b.layer?.borderColor = (on ? NSColor.white
-                    : NSColor(calibratedWhite: 0.1, alpha: 0.9)).cgColor
-            b.layer?.borderWidth = on ? 2 : 1
-        }
-        for (w, b) in widthButtons {
-            let on = abs(w - lineWidth) < 0.01
-            b.layer?.backgroundColor = on
-                ? NSColor(calibratedWhite: 0.95, alpha: 0.28).cgColor : NSColor.clear.cgColor
-            b.contentTintColor = on ? .white : NSColor(calibratedWhite: 0.9, alpha: 1)
-        }
-        // isEnabled=false 对 isBordered=false 的模板图按钮几乎没有视觉差别，
-        // 必须自己压暗：否则用户分不清"没有可撤销的了"和"撤销按钮坏了"
-        undoButton.isEnabled = canUndo
-        redoButton.isEnabled = canRedo
-        clearButton.isEnabled = hasAnnotations
-        undoButton.contentTintColor = tint(canUndo)
-        redoButton.contentTintColor = tint(canRedo)
-        clearButton.contentTintColor = tint(hasAnnotations)
-    }
-
-    private func tint(_ enabled: Bool) -> NSColor {
-        NSColor(calibratedWhite: 0.88, alpha: enabled ? 1 : 0.32)
+        img.isTemplate = true
+        return img
     }
 
     // MARK: 事件

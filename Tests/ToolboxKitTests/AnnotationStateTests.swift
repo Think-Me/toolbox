@@ -205,3 +205,15 @@ private func drag(_ s: SelectionState, from: CGPoint, to: CGPoint,
 private func drag2(_ s: SelectionState, from: CGPoint, to: CGPoint) -> SelectionState {
     drag(s, from: from, to: to)
 }
+
+@Test func fontSizeChoiceAppliesToNextStrokeAndIsUndoable() {
+    var s = selected(.text)
+    s = SelectionReducer.reduce(s, .annotationFontSize(26), bounds: sel)
+    #expect(s.annotation.fontSize == 26)
+    s = SelectionReducer.reduce(s, .annotationDown(CGPoint(x: 150, y: 150)), bounds: sel)
+    s = SelectionReducer.reduce(s, .annotationUp, bounds: sel)
+    s = SelectionReducer.reduce(s, .commitText("大字", fontSize: s.annotation.fontSize), bounds: sel)
+    #expect(s.annotation.annotations.last?.fontSize == 26)
+    s = SelectionReducer.reduce(s, .undoAnnotation, bounds: sel)
+    #expect(s.annotation.annotations.isEmpty)
+}

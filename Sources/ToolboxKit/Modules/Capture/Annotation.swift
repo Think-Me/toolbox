@@ -12,7 +12,6 @@ public enum AnnotationTool: String, Codable, Sendable, CaseIterable, Equatable {
     /// 该工具至少需要几个点才算"画完了"。
     /// 手抖碰一下只产生 1 个点，不该进撤销栈。
     public var minimumPointCount: Int { self == .text ? 1 : 2 }
-    public var isStrokeBased: Bool { self == .pen }
 }
 
 /// RGBA 分量 0...1。
@@ -37,7 +36,6 @@ public struct AnnotationColor: Codable, Equatable, Sendable, Hashable {
     public static let pureRed = AnnotationColor(red: 1, green: 0, blue: 0)
     public static let pureGreen = AnnotationColor(red: 0, green: 1, blue: 0)
     public static let pureBlue = AnnotationColor(red: 0, green: 0, blue: 1)
-    public static let pureWhite = AnnotationColor(red: 1, green: 1, blue: 1)
     public static let pureBlack = AnnotationColor(red: 0, green: 0, blue: 0)
 
     /// 亮度（0...1），测试与"文字描边对比度"这类判断要用
