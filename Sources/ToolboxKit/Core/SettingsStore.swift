@@ -43,7 +43,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
             .captureRegion: KeyCombo(keyCode: KeyCombo.ansiA, carbonModifiers: KeyCombo.control | KeyCombo.cmd),
             .captureFull:   KeyCombo(keyCode: KeyCombo.f2, carbonModifiers: 0),
             .killAllPins:   KeyCombo(keyCode: KeyCombo.f3, carbonModifiers: 0),
-            .openSettings:  KeyCombo(keyCode: KeyCombo.comma, carbonModifiers: KeyCombo.control | KeyCombo.cmd),
+            // 打开设置**不再有全局热键**（用户要求：不需要热键去开本 App 的设置）。
+            // 菜单项的 ⌘, 是本地菜单快捷键，不是 Carbon 全局热键，两者别混。
         ],
         pinMinZoom: 0.2, pinMaxZoom: 8, scrollZoomDirection: .upMagnifies,
         maxTextBytes: 256 * 1024, maxImagePixels: 8000 * 8000, maxFileEntries: 200,
@@ -101,8 +102,26 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         clipboardCapacity = try c.decodeIfPresent(Int.self, forKey: .clipboardCapacity) ?? 500
-        hotkeys = try c.decodeIfPresent([HotkeyID: KeyCombo].self, forKey: .hotkeys)
-            ?? AppSettings.default.hotkeys
+        // hotkeys 在盘上是**键值交替数组**，不是 JSON 对象：
+        // Swift 的 Codable 只对 [String: x] / [Int: x] 写成对象，
+        // [HotkeyID: KeyCombo] 这种自定义 Codable 键会写成 ["clipboard", {...}, ...]。
+        // （用户机器上的真实 settings.json 就是这个形状。）
+        // 所以不能用 [HotkeyID: KeyCombo] 直接解码：文件里只要多出一个已删除的键位
+        // （实测就有 openSettings），整份解码就会失败 → 被当损坏文件隔离 →
+        // 用户所有设置被静默重置。宁可跳过未知键，也绝不能因此丢整份配置。
+        var mappedHotkeys = AppSettings.default.hotkeys
+        if let pieces = try? c.decodeIfPresent([HotkeyPiece].self, forKey: .hotkeys) {
+            var i = 0
+            while i + 1 < pieces.count {
+                defer { i += 2 }
+                guard case .text(let raw) = pieces[i],
+                      case .combo(let combo) = pieces[i + 1] else { continue }
+                // 未知键位（已删掉的）直接跳过，其余覆盖默认值；
+                // 缺失的键位留在默认值上，保证不会出现某个功能没有键位
+                if let id = HotkeyID(rawValue: raw) { mappedHotkeys[id] = combo }
+            }
+        }
+        hotkeys = mappedHotkeys
         pinMinZoom = try c.decodeIfPresent(Double.self, forKey: .pinMinZoom) ?? 0.2
         pinMaxZoom = try c.decodeIfPresent(Double.self, forKey: .pinMaxZoom) ?? 8
         scrollZoomDirection = try c.decodeIfPresent(ZoomDirection.self, forKey: .scrollZoomDirection)
@@ -120,6 +139,30 @@ public struct AppSettings: Codable, Equatable, Sendable {
         annotationToolbarEnabled = try c.decodeIfPresent(Bool.self, forKey: .annotationToolbarEnabled) ?? true
         annotationDefaultColorHex = try c.decodeIfPresent(String.self, forKey: .annotationDefaultColorHex) ?? "#FF3B30"
         annotationDefaultLineWidth = try c.decodeIfPresent(Double.self, forKey: .annotationDefaultLineWidth) ?? 4
+    }
+}
+
+/// hotkeys 那个键值交替数组里的一个元素（字符串键 或 KeyCombo）。
+/// 声明成"两者之一"是为了**读得动也跳得过**：遇到不认识的键位字符串
+/// 照样能成对读掉，不会让后面整串错位。
+private enum HotkeyPiece: Codable {
+    case text(String)
+    case combo(KeyCombo)
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if let s = try? c.decode(String.self) { self = .text(s); return }
+        if let k = try? c.decode(KeyCombo.self) { self = .combo(k); return }
+        throw DecodingError.dataCorruptedError(
+            in: c, debugDescription: "hotkeys 数组里既不是键名也不是键位")
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case .text(let s): try c.encode(s)
+        case .combo(let k): try c.encode(k)
+        }
     }
 }
 

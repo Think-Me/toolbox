@@ -12,6 +12,9 @@ public final class AppModel: ObservableObject {
     @Published public var permissionRows: [PermissionRow]
     @Published public var recordingID: HotkeyID?
     @Published public var recorderMessage: String?
+    /// recorderMessage 是"这次没成功"（冲突/非法键位）还是普通进度提示。
+    /// 不分的话，红色的错误和灰色的提示混在一起，用户看不出有没有改上
+    @Published public var recorderIsError = false
     @Published public var loginItemEnabled: Bool
     @Published public var loginItemError: String?
     @Published public var provisioningMessage: String?
@@ -89,6 +92,7 @@ public final class AppModel: ObservableObject {
         stopRecording()
         recordingID = id
         recorderMessage = nil
+        recorderIsError = false
         var rec = HotkeyRecorderModel(initial: settings.hotkeys[id] ?? .defaultBinding(for: id))
         // 必须调用模型自己的 beginRecording：它的 keyPressed 第一行是
         // `guard isRecording else { return }`，漏了这步就是"进入录制态但按什么都没反应"。
@@ -109,15 +113,30 @@ public final class AppModel: ObservableObject {
         guard var rec = recorder, let id = recordingID else { return }
         switch event.keyCode {
         case Self.escapeKey:
-            rec.escape(); recorder = rec; stopRecording(); return
+            rec.escape(); recorder = rec
+            recorderMessage = nil
+            recorderIsError = false
+            stopRecording(); return
         case Self.returnKey, Self.enterKey:
             if let next = rec.commit() {
+                // 落盘**之前**先判冲突：撞了就拒绝，保持原键位不变
+                if let conflict = HotkeyConflict.detect(
+                    proposed: next, for: id, bindings: settings.hotkeys,
+                    probeOccupied: { HotkeyCenter.shared.isOccupiedByOtherApp($0) }) {
+                    recorderMessage = conflict
+                    recorderIsError = true
+                    recorder = rec
+                    stopRecording()
+                    return
+                }
                 settings.hotkeys[id] = next
                 recorderMessage = "已设为 \(next.displayString)，重启后仍生效"
+                recorderIsError = false
                 try? store.save(settings)
                 onHotkeysChanged?(settings)
             } else {
                 recorderMessage = "还没按下新键位，按 Esc 取消"
+                recorderIsError = false
             }
             recorder = rec; stopRecording(); return
         default:
@@ -125,8 +144,10 @@ public final class AppModel: ObservableObject {
             recorder = rec
             if let rejected = rec.rejectedMessage {
                 recorderMessage = rejected
+                recorderIsError = true
             } else if let pending = rec.pending {
                 recorderMessage = "按下 \(pending.displayString)，回车确认"
+                recorderIsError = false
             }
         }
     }

@@ -92,7 +92,6 @@ public struct AppActions {
         case .captureRegion: captureRegion()
         case .captureFull:   captureFull()
         case .killAllPins:   killAllPins()
-        case .openSettings:  openSettings()
         }
     }
 }
@@ -136,12 +135,13 @@ public enum MenuBuilder {
             .separator,
             MenuItemSpec(title: "暂停剪贴板记录", checked: !recording, action: .togglePause),
             MenuItemSpec(title: "权限与授权", action: .openPermissions),
-            // 设置项绑到全局热键：菜单栏图标可能被系统隐藏（刘海 + 图标占满），
-            // 没有这个热键，App 在用户机器上就彻底不可达。
+            // 打开设置**不再是全局热键**：用户明确不要"用热键开本 App 的设置"。
+            // 这里的 ⌘, 是菜单自己的本地快捷键（仅本 App 激活时生效），
+            // 和 Carbon 全局热键是两回事，所以直接写死，不从设置里读。
             MenuItemSpec(title: "设置与快捷键…",
-                         keyEquivalent: charAndMask(settings.hotkeys[.openSettings]).0,
-                         keyEquivalentMask: charAndMask(settings.hotkeys[.openSettings]).1,
-                         action: .hotkey(.openSettings)),
+                         keyEquivalent: ",",
+                         keyEquivalentMask: KeyCombo.cmd,
+                         action: .openSettings),
             MenuItemSpec(title: "登录时启动", checked: loginItemEnabled, action: .toggleLoginItem),
             .separator,
             MenuItemSpec(title: "退出 Toolbox", action: .quit),

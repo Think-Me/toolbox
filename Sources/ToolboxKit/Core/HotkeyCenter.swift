@@ -21,7 +21,19 @@ private func handleHotKey(_ next: EventHandlerCallRef?, _ event: EventRef?,
 }
 
 public enum HotkeyID: String, Codable, CaseIterable, Sendable {
-    case clipboard, hostsQuick, captureRegion, captureFull, killAllPins, openSettings
+    case clipboard, hostsQuick, captureRegion, captureFull, killAllPins
+
+    /// 设置页与冲突提示里的中文名。放在 HotkeyID 上而不是各视图自己的表，
+    /// 是为了让冲突提示和列表文案同源，加键位时不会漏改一处
+    public var label: String {
+        switch self {
+        case .clipboard:     return "剪贴板历史"
+        case .hostsQuick:    return "Hosts 快速切换"
+        case .captureRegion: return "区域截图"
+        case .captureFull:   return "全屏截图"
+        case .killAllPins:   return "关闭所有贴图"
+        }
+    }
 }
 
 @MainActor
@@ -111,6 +123,11 @@ public final class HotkeyCenter {
     public func unregister(_ id: HotkeyID) {
         guard let assigned = slots.removeValue(forKey: id) else { return }
         unregisterID(assigned)
+    }
+
+    /// 这个键位是否被**别的 App** 占着（Carbon probe 会临时注册再注销，有副作用）。
+    public func isOccupiedByOtherApp(_ combo: KeyCombo) -> Bool {
+        probe(combo) != 0     // noErr == 0，避免把 Carbon 常量传染给调用方
     }
 
     /// 试探注册再立刻注销：noErr = 空闲；`eventHotKeyExistsErr`(-9878) = 已被别的 App 占用。
