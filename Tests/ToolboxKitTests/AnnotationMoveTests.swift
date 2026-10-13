@@ -53,16 +53,15 @@ private func rectAnn(filled: Bool = false) -> Annotation {
 
 @Test func topmostWinsWhenShapesOverlap() {
     // 后画的在上面：从下往上找会让被盖住的图形抢走点击
-    let bottom = Annotation(tool: .arrow, points: [CGPoint(x: 150, y: 150), CGPoint(x: 350, y: 300)],
-                            color: .pureBlue, lineWidth: 4)
-    let top = Annotation(tool: .arrow, points: [CGPoint(x: 200, y: 180), CGPoint(x: 260, y: 220)],
-                         color: .pureRed, lineWidth: 4)
-    #expect(AnnotationHitTest.topmost(at: CGPoint(x: 230, y: 200), in: [bottom, top]) == top.id)
+    let bottom = textAnn("第一块在底下", at: CGPoint(x: 150, y: 180), size: 22)
+    let top = textAnn("第二块在上面", at: CGPoint(x: 152, y: 182), size: 22)
+    let p = CGPoint(x: 160, y: 190)
+    #expect(AnnotationHitTest.topmost(at: p, in: [bottom, top]) == top.id)
     #expect(AnnotationHitTest.topmost(at: CGPoint(x: 400, y: 400), in: [bottom, top]) == nil)
 }
 
-@Test func onlyTextAndArrowAreDraggable() {
-    // 用户明确要求：除文字和箭头外不做可拖动
+@Test func onlyTextIsDraggable() {
+    // 用户明确要求：只有文字可拖动
     let rect = rectAnn(filled: true)
     let pen = Annotation(tool: .pen, points: [CGPoint(x: 150, y: 150), CGPoint(x: 250, y: 250)],
                          color: .pureRed, lineWidth: 4)
@@ -75,7 +74,7 @@ private func rectAnn(filled: Bool = false) -> Annotation {
     #expect(AnnotationHitTest.topmost(at: mid, in: [rect]) == nil)       // 但不给拖
     #expect(AnnotationHitTest.topmost(at: mid, in: [pen]) == nil)
     #expect(AnnotationHitTest.topmost(at: mid, in: [mosaic]) == nil)
-    #expect(AnnotationHitTest.topmost(at: mid, in: [arrow]) == arrow.id)
+    #expect(AnnotationHitTest.topmost(at: mid, in: [arrow]) == nil)   // 箭头也去掉了
     #expect(AnnotationHitTest.topmost(at: CGPoint(x: 160, y: 160), in: [textAnn()]) != nil)
 }
 
@@ -155,21 +154,18 @@ private func seeded(_ a: Annotation) -> AnnotationState {
 
 // MARK: reducer 路由
 
-@Test func clickingAnExistingArrowMovesItInsteadOfTheSelection() {
+@Test func clickingExistingTextMovesItInsteadOfTheSelection() {
     var s = SelectionState()
     s.rect = sel
     s.phase = .hasSelection
-    s.annotation.annotations = [Annotation(tool: .arrow,
-                                           points: [CGPoint(x: 150, y: 150), CGPoint(x: 250, y: 210)],
-                                           color: .pureRed, lineWidth: 4)]
+    s.annotation.annotations = [textAnn("拖我", at: CGPoint(x: 150, y: 150))]
     let id = s.annotation.annotations[0].id
-    let hit = AnnotationHitTest.topmost(at: CGPoint(x: 200, y: 180), in: s.annotation.annotations)
-    #expect(hit == id)
-    let down = SelectionReducer.reduce(s, .mouseDown(CGPoint(x: 200, y: 180)),
-                                       bounds: screen, hit: id)
+    let grab = CGPoint(x: 160, y: 158)
+    #expect(AnnotationHitTest.topmost(at: grab, in: s.annotation.annotations) == id)
+    let down = SelectionReducer.reduce(s, .mouseDown(grab), bounds: screen, hit: id)
     #expect(down.annotation.movingID == id)
     #expect(down.rect == sel)                              // 选区一动不动
-    let moved = SelectionReducer.reduce(down, .mouseDragged(CGPoint(x: 240, y: 200)),
+    let moved = SelectionReducer.reduce(down, .mouseDragged(CGPoint(x: 200, y: 178)),
                                         bounds: screen)
     #expect(moved.annotation.annotations[0].points[0].x == 190)
     #expect(moved.rect == sel)
@@ -220,4 +216,60 @@ private func seeded(_ a: Annotation) -> AnnotationState {
     #expect(out.annotation.movingID == nil)
     #expect(out.annotation.draft != nil)
     #expect(out.annotation.textAnchor == CGPoint(x: 400, y: 350))
+}
+
+// MARK: 输入框宽度
+
+@Test func editorStartsAtAboutTwoCharactersAndGrows() {
+    let sel = CGRect(x: 100, y: 100, width: 400, height: 300)
+    let size: CGFloat = 18
+    let two = TextEditorMetrics.characterWidth(fontSize: size) * 2
+    let empty = TextEditorMetrics.width(for: "", fontSize: size, anchorX: 150,
+                                        selection: sel, maxWidth: 520)
+    #expect(empty >= two)
+    #expect(empty <= two * 1.6)                // 起步就该是"两三个字"的量级，不是一长条
+
+    let short = TextEditorMetrics.width(for: "你好", fontSize: size, anchorX: 150,
+                                        selection: sel, maxWidth: 520)
+    let long = TextEditorMetrics.width(for: "你好世界你好世界你好世界", fontSize: size,
+                                       anchorX: 150, selection: sel, maxWidth: 520)
+    #expect(short >= empty)                     // 单调不减：删字前加字不该让框缩到更窄
+    #expect(long > short)
+}
+
+@Test func editorWidthNeverEscapesTheSelection() {
+    // 框超出选区右沿的话，下划线会画到选区外，用户以为能写到那儿
+    let sel = CGRect(x: 100, y: 100, width: 400, height: 300)
+    let w = TextEditorMetrics.width(for: String(repeating: "很长的字", count: 60),
+                                    fontSize: 18, anchorX: 460, selection: sel, maxWidth: 520)
+    #expect(460 + w <= sel.maxX + 0.001)          // 越界是更严重的错
+    // 视图会把锚点往左挪，保证至少还放得下一个最小框
+    let ax = TextEditorMetrics.clampedAnchorX(460, fontSize: 18, selection: sel)
+    #expect(ax < 460)
+    let w2 = TextEditorMetrics.width(for: "", fontSize: 18, anchorX: ax,
+                                     selection: sel, maxWidth: 520)
+    #expect(w2 >= TextEditorMetrics.characterWidth(fontSize: 18) * 2)
+    #expect(ax + w2 <= sel.maxX + 0.001)
+    // 正常位置不受影响
+    #expect(TextEditorMetrics.clampedAnchorX(200, fontSize: 18, selection: sel) == 200)
+}
+
+@Test func biggerFontMeansWiderEditor() {
+    let sel = CGRect(x: 100, y: 100, width: 900, height: 300)
+    let small = TextEditorMetrics.width(for: "你好", fontSize: 14, anchorX: 150,
+                                        selection: sel, maxWidth: 520)
+    let big = TextEditorMetrics.width(for: "你好", fontSize: 26, anchorX: 150,
+                                      selection: sel, maxWidth: 520)
+    #expect(big > small)
+}
+
+@Test func arrowIsNotDraggableButTextIs() {
+    // 用户实测"根本触发不了箭头拖动"：命中区就是那条线，长箭头几乎点不中
+    let arrow = Annotation(tool: .arrow, points: [CGPoint(x: 150, y: 150), CGPoint(x: 450, y: 300)],
+                           color: .pureRed, lineWidth: 4)
+    #expect(AnnotationHitTest.hits(arrow, at: CGPoint(x: 300, y: 225)))     // 判定本身成立
+    #expect(AnnotationHitTest.topmost(at: CGPoint(x: 300, y: 225), in: [arrow]) == nil)
+    let t = textAnn()
+    #expect(AnnotationHitTest.topmost(at: CGPoint(x: t.textRect.midX, y: t.textRect.midY),
+                                      in: [t]) == t.id)
 }

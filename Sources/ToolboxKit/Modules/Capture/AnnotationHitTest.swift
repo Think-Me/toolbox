@@ -26,10 +26,11 @@ public enum AnnotationHitTest {
     /// 默认容差：线宽之外再给 6pt，否则 2px 的线几乎点不中
     public static let defaultTolerance: CGFloat = 6
 
-    /// 只有这两类图形可以拖动。矩形/画笔/马赛克**故意不做成可拖**：
-    /// 画错了撤销重画更快，而让它们可点会抢走"在框内拖动选区"和
-    /// "在矩形框内空白处起新图形"这两个更常用的操作。
-    public static let movableTools: Set<AnnotationTool> = [.text, .arrow]
+    /// **只有文字可以拖动**。箭头/矩形/画笔/马赛克都故意不做：
+    /// 箭头的命中区就是那条线（容差 8pt），想抓住长箭头中段几乎点不中，
+    /// 用户实测根本触发不了；其余图形画错了撤销重画更快，
+    /// 而且让它们可点会抢走"在框内拖动选区"和"在框内空白处起新图形"。
+    public static let movableTools: Set<AnnotationTool> = [.text]
 
     /// 返回**最上面**那个可拖动的图形 id。列表末尾是后画的，所以要倒着找 ——
     /// 从底下开始找会让被盖住的图形抢走点击。

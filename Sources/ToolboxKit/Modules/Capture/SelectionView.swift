@@ -136,6 +136,10 @@ public final class SelectionView: NSView {
     /// 两条路径的话"预览好看、导出走样"永远查不清。
     private func drawAnnotations(_ sel: CGRect, in ctx: CGContext) {
         var list = state.annotation.annotations
+        // 正在重编辑的那块由输入框本身显示，再画一遍就是重影
+        if let editing = editingAnnotationID {
+            list.removeAll { $0.id == editing }
+        }
         if let d = state.annotation.draft {
             list.append(Annotation(tool: d.tool, points: d.points, color: d.color,
                                    lineWidth: d.lineWidth, fontSize: d.fontSize,
@@ -399,13 +403,24 @@ public final class SelectionView: NSView {
     /// 正在编辑的是哪个已有文字块（nil = 新建）
     private var editingAnnotationID: UUID?
 
-    private func beginTextEditing(at anchor: CGPoint, existing: Annotation? = nil) {
+    private func beginTextEditing(at anchorPoint: CGPoint, existing: Annotation? = nil) {
         endTextEditing(commit: false)
         editingAnnotationID = existing?.id
         guard let sel = state.rect else { return }
-        let size = state.annotation.fontSize * 1.45
-        let width = Swift.min(Self.maxEditingWidth, Swift.max(120, sel.maxX - anchor.x))
-        let f = NSTextField(frame: CGRect(x: anchor.x, y: anchor.y, width: width, height: size))
+        // 贴着选区右沿点时把锚点往左挪，否则会起出一个几乎零宽的框
+        let anchor = CGPoint(x: TextEditorMetrics.clampedAnchorX(anchorPoint.x,
+                                                                fontSize: state.annotation.fontSize,
+                                                                selection: sel),
+                            y: anchorPoint.y)
+        let size = TextEditorMetrics.lineHeight(fontSize: state.annotation.fontSize) + 2
+        // 初始只给约两个字符宽，随输入内容增减（见 controlTextDidChange）
+        let width = TextEditorMetrics.width(for: existing?.text ?? "",
+                                            fontSize: state.annotation.fontSize,
+                                            anchorX: anchor.x, selection: sel,
+                                            maxWidth: Self.maxEditingWidth)
+        // x 抵消 cell 缩进：否则编辑时看到的首字母比最终落图的位置靠右 2pt
+        let f = NSTextField(frame: CGRect(x: anchor.x - TextEditorMetrics.cellHorizontalInset,
+                                          y: anchor.y, width: width, height: size))
         f.isBordered = false
         f.isBezeled = false
         f.drawsBackground = false
@@ -422,11 +437,9 @@ public final class SelectionView: NSView {
             state.annotation.fontSize = existing.fontSize
         }
         f.delegate = self
-        f.placeholderAttributedString = NSAttributedString(
-            string: "输入文字",
-            attributes: [.foregroundColor: NSColor(calibratedWhite: 1, alpha: 0.45),
-                         .font: NSFont.systemFont(ofSize: state.annotation.fontSize,
-                                                  weight: .semibold)])
+        // 不再放占位文字：框只有两个字符宽，"输入文字"会被裁成半截更像坏了。
+        // 底色 + 当前颜色的下划线 + 闪烁光标已经足够说明"在这儿打字"
+        f.placeholderString = ""
         addSubview(f)
         textEditor = f
         // 顺序要紧：**先让窗口成为 key，再设 first responder**。
@@ -466,6 +479,20 @@ public final class SelectionView: NSView {
     }
 
     private static let maxEditingWidth: CGFloat = 520
+
+    /// 输入内容变化时重算框宽：下划线和底色要跟着文字一起长短
+    private func resizeEditor(_ f: NSTextField) {
+        guard let sel = state.rect, textEditor === f else { return }
+        let text = f.currentEditor()?.string ?? f.stringValue
+        let w = TextEditorMetrics.width(for: text, fontSize: state.annotation.fontSize,
+                                        anchorX: f.frame.minX, selection: sel,
+                                        maxWidth: Self.maxEditingWidth)
+        guard abs(w - f.frame.width) > 0.5 else { return }
+        var frame = f.frame
+        frame.size.width = w
+        f.frame = frame
+        needsDisplay = true
+    }
 
     /// 输入中的文字块要有明显的"可以在这里打字"的信号：
     /// 半透明底 + 一条当前颜色的下划线。只靠占位文字太弱，
@@ -710,5 +737,12 @@ extension SelectionView: NSTextFieldDelegate {
             }
         }
         return true
+    }
+
+    /// 输入时实时改宽。和 doCommandBy 一样，协议要求 nonisolated，
+    /// 而这个回调只可能在主线程来
+    nonisolated public func controlTextDidChange(_ notification: Notification) {
+        guard let f = notification.object as? NSTextField else { return }
+        MainActor.assumeIsolated { resizeEditor(f) }
     }
 }
