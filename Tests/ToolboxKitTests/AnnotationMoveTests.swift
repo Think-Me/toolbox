@@ -53,13 +53,30 @@ private func rectAnn(filled: Bool = false) -> Annotation {
 
 @Test func topmostWinsWhenShapesOverlap() {
     // 后画的在上面：从下往上找会让被盖住的图形抢走点击
-    let bottom = Annotation(tool: .rect, points: [CGPoint(x: 150, y: 150), CGPoint(x: 350, y: 300)],
-                            color: .pureBlue, lineWidth: 4, filled: true)
-    let top = Annotation(tool: .rect, points: [CGPoint(x: 200, y: 180), CGPoint(x: 260, y: 220)],
-                         color: .pureRed, lineWidth: 4, filled: true)
-    let id = AnnotationHitTest.topmost(at: CGPoint(x: 230, y: 200), in: [bottom, top])
-    #expect(id == top.id)
+    let bottom = Annotation(tool: .arrow, points: [CGPoint(x: 150, y: 150), CGPoint(x: 350, y: 300)],
+                            color: .pureBlue, lineWidth: 4)
+    let top = Annotation(tool: .arrow, points: [CGPoint(x: 200, y: 180), CGPoint(x: 260, y: 220)],
+                         color: .pureRed, lineWidth: 4)
+    #expect(AnnotationHitTest.topmost(at: CGPoint(x: 230, y: 200), in: [bottom, top]) == top.id)
     #expect(AnnotationHitTest.topmost(at: CGPoint(x: 400, y: 400), in: [bottom, top]) == nil)
+}
+
+@Test func onlyTextAndArrowAreDraggable() {
+    // 用户明确要求：除文字和箭头外不做可拖动
+    let rect = rectAnn(filled: true)
+    let pen = Annotation(tool: .pen, points: [CGPoint(x: 150, y: 150), CGPoint(x: 250, y: 250)],
+                         color: .pureRed, lineWidth: 4)
+    let mosaic = Annotation(tool: .mosaic, points: [CGPoint(x: 150, y: 150), CGPoint(x: 250, y: 250)],
+                            color: .pureRed, lineWidth: 4)
+    let arrow = Annotation(tool: .arrow, points: [CGPoint(x: 150, y: 150), CGPoint(x: 250, y: 250)],
+                           color: .pureRed, lineWidth: 4)
+    let mid = CGPoint(x: 200, y: 200)
+    #expect(AnnotationHitTest.hits(rect, at: mid))                       // 命中判定本身仍然成立
+    #expect(AnnotationHitTest.topmost(at: mid, in: [rect]) == nil)       // 但不给拖
+    #expect(AnnotationHitTest.topmost(at: mid, in: [pen]) == nil)
+    #expect(AnnotationHitTest.topmost(at: mid, in: [mosaic]) == nil)
+    #expect(AnnotationHitTest.topmost(at: mid, in: [arrow]) == arrow.id)
+    #expect(AnnotationHitTest.topmost(at: CGPoint(x: 160, y: 160), in: [textAnn()]) != nil)
 }
 
 @Test func incompleteShapesAreNotHitTargets() {
@@ -138,12 +155,16 @@ private func seeded(_ a: Annotation) -> AnnotationState {
 
 // MARK: reducer 路由
 
-@Test func clickingAnExistingShapeMovesItInsteadOfTheSelection() {
+@Test func clickingAnExistingArrowMovesItInsteadOfTheSelection() {
     var s = SelectionState()
     s.rect = sel
     s.phase = .hasSelection
-    s.annotation.annotations = [rectAnn(filled: true)]
+    s.annotation.annotations = [Annotation(tool: .arrow,
+                                           points: [CGPoint(x: 150, y: 150), CGPoint(x: 250, y: 210)],
+                                           color: .pureRed, lineWidth: 4)]
     let id = s.annotation.annotations[0].id
+    let hit = AnnotationHitTest.topmost(at: CGPoint(x: 200, y: 180), in: s.annotation.annotations)
+    #expect(hit == id)
     let down = SelectionReducer.reduce(s, .mouseDown(CGPoint(x: 200, y: 180)),
                                        bounds: screen, hit: id)
     #expect(down.annotation.movingID == id)

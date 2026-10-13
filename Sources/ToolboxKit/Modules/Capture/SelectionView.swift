@@ -272,11 +272,12 @@ public final class SelectionView: NSView {
             // 正在打字时点别处：提交这一行，然后**继续处理这一下点击**，
             // 不要 return。之前直接 return 把点击吞掉，导致"想加第二个文字块
             // 必须先空点一次"，用户反馈要来回切工具才行。
+            //
+            // 也**不要在这里自己起编辑器**：那样绕过了状态机，`textAnchor`
+            // 还停在上一块，抬手时又会按旧锚点把编辑器弹回旧位置
+            // （用户报的"输入线跑到第一次的区域"）。
+            // 交给下面的 reduce(.mouseDown) + mouseUp，锚点由状态机更新。
             endTextEditing(commit: true)
-            if state.annotation.tool == .text {
-                beginTextEditing(at: p.clamped(to: state.rect ?? bounds))
-                return
-            }
         }
         let hover = state.phase == .idle
             ? (hoverWindow ?? SelectionSnapping.topmostWindow(containing: p, in: windowCandidates))
