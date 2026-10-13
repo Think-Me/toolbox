@@ -29,6 +29,21 @@ for f in AppIcon.icns MenuBarIcon.png; do
     fi
 done
 
+# M5 内置 xray 内核。缺失时不阻断构建（代理功能自行降级），但要显眼提示。
+if [ -x "Vendor/xray/xray" ]; then
+    mkdir -p "$APP/Contents/Resources/proxy"
+    cp Vendor/xray/xray Vendor/xray/geoip.dat Vendor/xray/geosite.dat \
+       "$APP/Contents/Resources/proxy/"
+    # 版本戳：XrayBootstrap 靠它判断"App 升级后要不要重拷内核"
+    cp Vendor/xray/.version "$APP/Contents/Resources/proxy/version.txt"
+    chmod +x "$APP/Contents/Resources/proxy/xray"
+    # arm64 上可执行文件必须有有效签名，否则 exec 即 SIGKILL（spec §1.1 #36）。
+    # 嵌套二进制单独签，再 seal 外层 App。
+    codesign --force --sign - "$APP/Contents/Resources/proxy/xray"
+else
+    echo "⚠️ 缺 Vendor/xray/xray，代理功能不可用。先跑 ./Scripts/fetch-xray.sh" >&2
+fi
+
 # 不要加 --options runtime（hardened runtime）：本地签名 + hardened 会让
 # AppleEvents / 辅助功能类调用因为缺 entitlement 而失败。
 #

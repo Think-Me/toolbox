@@ -22,10 +22,14 @@ public struct AppPaths: Sendable {
     public var hostsOriginal: URL { root.appendingPathComponent("Hosts/original-hosts") }
     public var hostsBackupDirectory: URL { root.appendingPathComponent("Hosts/backup", isDirectory: true) }
     public var logsDirectory: URL { root.appendingPathComponent("logs", isDirectory: true) }
+    /// M5 代理：xray 内核 + geoip/geosite.dat + 生成的 config.json 都放这里。
+    /// 必须在可写目录（不能写进 .app bundle），且 .dat 要和 config.json 同目录 ——
+    /// xray 按 config 文件所在目录解析 geoip.dat（spec §1.1 #35）。
+    public var proxyDirectory: URL { root.appendingPathComponent("Proxy", isDirectory: true) }
 
     public func ensureDirectories() throws {
         let fm = FileManager.default
-        for dir in [root, mediaDirectory, hostsBackupDirectory, logsDirectory] {
+        for dir in [root, mediaDirectory, hostsBackupDirectory, logsDirectory, proxyDirectory] {
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         }
     }

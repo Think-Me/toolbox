@@ -11,3 +11,6 @@ derivedData/
 Resources/AppIcon.iconset/
 
 __pycache__/
+
+# M5 内置 xray 内核（构建期下载，不入库）
+Vendor/
