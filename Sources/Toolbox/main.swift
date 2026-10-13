@@ -264,7 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         .toolChanged(.text),
                         .annotationDown(CGPoint(x: 200, y: 360)),
                         .annotationUp,
-                        .commitText("标注文字 ABC", fontSize: 26),
+                        .commitText("标注文字 ABC", fontSize: 26, editing: nil),
                         .toolChanged(nil),
                     ])
                     let a = view.state.annotation

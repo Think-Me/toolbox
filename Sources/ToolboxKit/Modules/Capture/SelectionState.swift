@@ -63,7 +63,7 @@ public enum SelectionAction: Equatable {
     case annotationDown(CGPoint)
     case annotationDragged(CGPoint)
     case annotationUp
-    case commitText(String, fontSize: CGFloat)
+    case commitText(String, fontSize: CGFloat, editing: UUID?)
     case undoAnnotation
     case redoAnnotation
     case clearAnnotations
@@ -74,15 +74,39 @@ public enum SelectionReducer {
 
     /// `snap` 非空时对拖拽结果做边缘吸附。
     /// 只在拖拽/缩放时生效：方向键微调是像素级操作，吸附会和它打架。
+    /// `hit` 是"这一点落在哪个已画图形上"（由视图算好传进来）。
+    /// 非空时按下就是**移动那个图形**，而不是改选区或画新图形。
     public static func reduce(_ state: SelectionState, _ action: SelectionAction,
-                              bounds: CGRect, snap: SnapTargets? = nil) -> SelectionState {
+                              bounds: CGRect, snap: SnapTargets? = nil,
+                              hit: UUID? = nil) -> SelectionState {
         var s = state
+
+        // 正在移动图形：拖动与抬手都由标注状态机接管
+        if s.annotation.movingID != nil {
+            switch action {
+            case .mouseDragged(let p):
+                if let sel = s.rect { s.annotation.dragMove(to: p, in: sel) }
+                return s
+            case .mouseUp:
+                s.annotation.endMove()
+                return s
+            default: break
+            }
+        }
 
         // 有活动工具时，鼠标三件事全部转给标注状态机。
         // 这里必须拦在最前面：否则"拖一个矩形"会顺手把选区改成那个矩形的大小。
         if s.annotation.isActive, let sel = s.rect {
             switch action {
-            case .mouseDown(let p, _): s.annotation.down(at: p, in: sel); return s
+            case .mouseDown(let p, _):
+                // 文字工具点到**已有文字**上：当作移动/重编辑的起点，
+                // 而不是在它上面再盖一个
+                if let id = hit, s.annotation.annotations.first(where: { $0.id == id })?.tool == .text {
+                    s.annotation.beginMove(id: id, at: p)
+                } else {
+                    s.annotation.down(at: p, in: sel)
+                }
+                return s
             case .mouseDragged(let p): s.annotation.drag(to: p, in: sel); return s
             case .mouseUp: s.annotation.up(); return s
             case .escape where s.annotation.draft != nil:
@@ -103,6 +127,10 @@ public enum SelectionReducer {
             s.activeHandle = nil
 
         case .mouseDown(let p, let hover):
+            if let id = hit, let sel = s.rect, sel.contains(p) {
+                s.annotation.beginMove(id: id, at: p)
+                return s
+            }
             handleDown(&s, at: p, hover: hover, bounds: bounds)
 
         case .mouseDragged(let p):
@@ -202,8 +230,8 @@ public enum SelectionReducer {
         case .annotationUp:
             s.annotation.up()
 
-        case .commitText(let text, let size):
-            s.annotation.commitText(text, fontSize: size)
+        case .commitText(let text, let size, let editing):
+            s.annotation.commitText(text, fontSize: size, editing: editing)
 
         case .undoAnnotation:
             s.annotation.undo()

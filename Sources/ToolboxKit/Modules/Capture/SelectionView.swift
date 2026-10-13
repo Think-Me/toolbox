@@ -126,6 +126,7 @@ public final class SelectionView: NSView {
         ctx.stroke(sel.integral)
 
         drawAnnotations(sel, in: ctx)
+        drawEditingAffordance(in: ctx)
         drawHandles(sel, in: ctx)
         drawSizeLabel(sel)
     }
@@ -266,10 +267,17 @@ public final class SelectionView: NSView {
     // MARK: 鼠标
 
     override public func mouseDown(with event: NSEvent) {
-        // 正在打字时这一下点的是"别处"：先提交，并且**吃掉**这次点击，
-        // 否则同一次按下既提交文字又起一个新标注
-        if textEditor != nil { endTextEditing(commit: true); return }
         let p = convert(event.locationInWindow, from: nil)
+        if textEditor != nil {
+            // 正在打字时点别处：提交这一行，然后**继续处理这一下点击**，
+            // 不要 return。之前直接 return 把点击吞掉，导致"想加第二个文字块
+            // 必须先空点一次"，用户反馈要来回切工具才行。
+            endTextEditing(commit: true)
+            if state.annotation.tool == .text {
+                beginTextEditing(at: p.clamped(to: state.rect ?? bounds))
+                return
+            }
+        }
         let hover = state.phase == .idle
             ? (hoverWindow ?? SelectionSnapping.topmostWindow(containing: p, in: windowCandidates))
             : nil
@@ -285,6 +293,13 @@ public final class SelectionView: NSView {
         logEvent("mouseUp")
         let wasText = state.annotation.tool == .text
         reduce(.mouseUp)
+        // 点了一下已有文字块（位移没超阈值）= 重新编辑它
+        if let id = state.annotation.tappedID,
+           let a = state.annotation.annotations.first(where: { $0.id == id }),
+           a.tool == .text, let anchor = a.points.first {
+            beginTextEditing(at: anchor, existing: a)
+            return
+        }
         if wasText, let anchor = state.annotation.textAnchor { beginTextEditing(at: anchor) }
     }
 
@@ -305,9 +320,18 @@ public final class SelectionView: NSView {
         for a in actions { reduce(a) }
     }
 
+    /// 按下这一点落在哪个已画图形上。只有 mouseDown 需要算：
+    /// 它决定"这一下是移动已有图形，还是改选区/画新图形"
+    private static func hitID(for action: SelectionAction,
+                              in list: [Annotation]) -> UUID? {
+        guard case .mouseDown(let p, _) = action, !list.isEmpty else { return nil }
+        return AnnotationHitTest.topmost(at: p, in: list)
+    }
+
     private func reduce(_ action: SelectionAction) {
         logEvent("reduce \(action) → phase=\(String(describing: state.phase)) rect=\(String(describing: state.rect))")
-        state = SelectionReducer.reduce(state, action, bounds: bounds, snap: snapTargets)
+        state = SelectionReducer.reduce(state, action, bounds: bounds, snap: snapTargets,
+                                        hit: Self.hitID(for: action, in: state.annotation.annotations))
         logEvent("  结果 phase=\(String(describing: state.phase)) canCommit=\(state.canCommit) exit=\(state.exitRequested)")
         if state.exitRequested { onCommit?(.cancel) }
     }
@@ -371,8 +395,12 @@ public final class SelectionView: NSView {
     /// 在锚点起一个内联输入框。
     /// 不用 NSPanel/单独窗口：那会引入"焦点在别处、遮罩收不到键"的一类问题，
     /// 而且贴图画面的坐标对齐要再算一层。
-    private func beginTextEditing(at anchor: CGPoint) {
+    /// 正在编辑的是哪个已有文字块（nil = 新建）
+    private var editingAnnotationID: UUID?
+
+    private func beginTextEditing(at anchor: CGPoint, existing: Annotation? = nil) {
         endTextEditing(commit: false)
+        editingAnnotationID = existing?.id
         guard let sel = state.rect else { return }
         let size = state.annotation.fontSize * 1.45
         let width = Swift.min(Self.maxEditingWidth, Swift.max(120, sel.maxX - anchor.x))
@@ -388,6 +416,10 @@ public final class SelectionView: NSView {
         f.font = NSFont.systemFont(ofSize: state.annotation.fontSize, weight: .semibold)
         f.textColor = state.annotation.color.nsColor
         // 插入点在 NSTextField 上没有直接属性：它用的是窗口共享的 field editor
+        if let existing {
+            f.stringValue = existing.text ?? ""
+            state.annotation.fontSize = existing.fontSize
+        }
         f.delegate = self
         f.placeholderAttributedString = NSAttributedString(
             string: "输入文字",
@@ -402,18 +434,60 @@ public final class SelectionView: NSView {
         // "编辑器优先"逻辑吞掉，编辑器再也关不掉，热键一直挂着。
         // （用户一次报的三个症状同源）
         window?.makeKeyAndOrderFront(nil)
-        let tookFocus = window?.makeFirstResponder(f) ?? false
-        // 光标颜色：深色背景上默认的黑光标几乎看不见
-        if let editor = window?.fieldEditor(true, for: f) as? NSTextView {
-            editor.insertionPointColor = .white
-        }
-        // 热键闸门：以 self 为宿主，遮罩视图一消失就自动失效（见 HotkeyCenter 注释）
-        HotkeyCenter.shared.textEditingHost = tookFocus ? self : nil
-        if !tookFocus { logEvent("TEXTEDIT 输入框拿不到焦点") }
+        applyEditorFocus(to: f)
         needsDisplay = true
     }
 
+    /// 要焦点 + 设插入点颜色 + 挂热键闸门。
+    ///
+    /// 紧接着上一个编辑器 `removeFromSuperview` 时，同步 `makeFirstResponder`
+    /// 有时会失败（共享的 field editor 还在收尾），所以**先试一次，
+    /// 不行就下一轮 runloop 再试**。不这么做的话第二个文字块会"框在但打不进字"。
+    private func applyEditorFocus(to f: NSTextField, retry: Bool = true) {
+        window?.makeKeyAndOrderFront(nil)
+        let took = window?.makeFirstResponder(f) ?? false
+        if let editor = window?.fieldEditor(true, for: f) as? NSTextView {
+            // 深色画面上默认的黑光标几乎看不见
+            editor.insertionPointColor = .white
+        }
+        if took {
+            HotkeyCenter.shared.textEditingHost = self
+            return
+        }
+        guard retry, textEditor === f else {
+            logEvent("TEXTEDIT 输入框拿不到焦点")
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.textEditor === f else { return }
+            self.applyEditorFocus(to: f, retry: false)
+        }
+    }
+
     private static let maxEditingWidth: CGFloat = 520
+
+    /// 输入中的文字块要有明显的"可以在这里打字"的信号：
+    /// 半透明底 + 一条当前颜色的下划线。只靠占位文字太弱，
+    /// 用户分不清"框在这儿"和"已经打完了"。
+    private func drawEditingAffordance(in ctx: CGContext) {
+        guard let f = textEditor else { return }
+        let r = f.frame
+        ctx.saveGState()
+        ctx.setFillColor(NSColor(calibratedWhite: 0.12, alpha: 0.55).cgColor)
+        ctx.fill(r.insetBy(dx: -4, dy: -2))
+        let color = state.annotation.color.nsColor
+        ctx.setStrokeColor(color.cgColor)
+        ctx.setLineWidth(2)
+        ctx.move(to: CGPoint(x: r.minX - 4, y: r.maxY + 1))
+        ctx.addLine(to: CGPoint(x: r.maxX + 4, y: r.maxY + 1))
+        ctx.strokePath()
+        // 左右两个端点小方块：让"输入区间的边界"看得出来
+        ctx.setFillColor(color.cgColor)
+        for x in [r.minX - 4, r.maxX + 4] {
+            ctx.fill(CGRect(x: x - 2, y: r.maxY - 1, width: 4, height: 4))
+        }
+        ctx.restoreGState()
+    }
 
     /// 遮罩收口时调用。不提交内容，只保证"编辑器不留存、热键不悬空"。
     public func closeEditorForDismiss() {
@@ -430,11 +504,13 @@ public final class SelectionView: NSView {
     private func endTextEditing(commit: Bool, typed: String? = nil) {
         guard let f = textEditor else { return }
         textEditor = nil
+        let editing = editingAnnotationID
+        editingAnnotationID = nil
         let text = typed ?? f.currentEditor()?.string ?? f.stringValue
         f.removeFromSuperview()
         if textEditor == nil { HotkeyCenter.shared.textEditingHost = nil }
         if commit {
-            reduce(.commitText(text, fontSize: state.annotation.fontSize))
+            reduce(.commitText(text, fontSize: state.annotation.fontSize, editing: editing))
         }
         window?.makeFirstResponder(self)
         needsDisplay = true
