@@ -24,7 +24,7 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
     private let model: AppModel
     private let restoreToAccessory: Bool
 
-    public init(model: AppModel, hostsModel: HostsViewModel) {
+    public init(model: AppModel, hostsModel: HostsViewModel, proxyModel: ProxyViewModel, initialTab: Int = 0) {
         self.model = model
         self.restoreToAccessory = true
         let window = RecordingWindow(
@@ -34,7 +34,7 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
         window.title = "Toolbox 设置"
         window.isReleasedWhenClosed = false
         window.center()
-        window.contentView = NSHostingView(rootView: SettingsRootView(model: model, hostsModel: hostsModel))
+        window.contentView = NSHostingView(rootView: SettingsRootView(model: model, hostsModel: hostsModel, proxyModel: proxyModel, initialTab: initialTab))
         super.init(window: window)
         window.delegate = self
         let rw = window

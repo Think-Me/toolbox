@@ -135,6 +135,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                   backupDirectory: paths.hostsBackupDirectory,
                                   originalSnapshot: paths.hostsOriginal))
     lazy var hostsModel = HostsViewModel(store: hostsStore, applying: hostsApplying)
+
+    // MARK: 代理模块（M5）
+    lazy var proxyModel = ProxyViewModel(paths: paths)
     var hostsPanel: HostsQuickPanelView?
 
     var hostsSnapshot: HostsMenuSnapshot {
@@ -489,6 +492,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     + "或直接在刚打开的面板里把 Toolbox 的开关打开，然后完全退出 App 再重开。\n")
                 return
             }
+            if CommandLine.arguments.contains("--proxy-run-probe") {
+                // 端到端：真实内置内核走 bootstrap→编译→启动，验证端口真在 listen
+                let vm = proxyModel
+                vm.setPorts(socks: 20808, http: 20809)
+                let json: [String: Any] = ["ps": "probe", "add": "127.0.0.1", "port": "443",
+                    "id": "11111111-2222-3333-4444-555555555555", "aid": "0", "net": "tcp"]
+                let b64 = (try? JSONSerialization.data(withJSONObject: json))?.base64EncodedString() ?? ""
+                vm.addField = "vmess://" + b64
+                vm.addFromLink()
+                vm.startEngine()
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 2_500_000_000)
+                    let socksUp = ProcessProxyRunner().run("/usr/bin/nc", ["-z", "127.0.0.1", "20808"]).status == 0
+                    let httpUp = ProcessProxyRunner().run("/usr/bin/nc", ["-z", "127.0.0.1", "20809"]).status == 0
+                    log("PROXYRUN state=\(vm.engineState) socksListen=\(socksUp) httpListen=\(httpUp) nodes=\(vm.library.nodes.count)\n")
+                    vm.shutdown()
+                    NSApp.terminate(nil)
+                }
+                return
+            }
+            if CommandLine.arguments.contains("--proxy-preview") {
+                self.showSettings(initialTab: 4)
+                return
+            }
             if CommandLine.arguments.contains("--settings-preview") {
                 self.showSettings()
                 if let w = self.settingsWindow?.window {
@@ -533,7 +560,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                              "--perms", "--smoke-hotkey", "--settings-preview",
                              "--grant-screen", "--capture-probe", "--pin-demo",
                              "--hosts-e2e", "--menu-probe", "--paste-probe",
-                             "--overlay-preview", "--clip-preview", "--text-probe"]
+                             "--overlay-preview", "--clip-preview", "--text-probe", "--proxy-preview", "--proxy-run-probe"]
     /// 实验：策略在 finishLaunching 之后再改可能完不成激活握手，
     /// 所以 --regular-mode 在 app.run() 之前就把策略定成 .regular。
     static var earlyRegular: Bool { CommandLine.arguments.contains("--regular-mode") }
@@ -660,9 +687,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if recording { monitor.start() } else { monitor.stop(reason: .userPaused) }
     }
 
-    func showSettings() {
+    /// App 退出前必须收干净代理：停内核 + 关系统代理。
+    /// 漏了关系统代理的话，用户整个系统流量还指向已死的本地端口 → 全网打不开。
+    func applicationWillTerminate(_ notification: Notification) {
+        proxyModel.shutdown()
+    }
+
+    func showSettings(initialTab: Int = 0) {
+        // 已开过就复用（切 tab 只在首次创建时定位；重复深链不是主路径，不为此加机制）
         if settingsWindow == nil {
-            settingsWindow = SettingsWindowController(model: model, hostsModel: hostsModel)
+            settingsWindow = SettingsWindowController(model: model, hostsModel: hostsModel, proxyModel: proxyModel, initialTab: initialTab)
         }
         settingsWindow?.show()
     }
