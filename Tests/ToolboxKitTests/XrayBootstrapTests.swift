@@ -2,85 +2,75 @@ import Foundation
 import Testing
 @testable import ToolboxKit
 
-private func makeBundle(_ dir: URL, version: String?, files: [String] = XrayBootstrap.assetFiles) {
+private func makeBundle(_ dir: URL, version: String?) {
     let fm = FileManager.default
     try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-    for f in files {
-        let url = dir.appendingPathComponent(f)
-        try? Data("dummy-\(f)".utf8).write(to: url)
+    for f in XrayBootstrap.coreFiles + XrayBootstrap.ruleFiles {
+        try? Data("dummy-\(f)".utf8).write(to: dir.appendingPathComponent(f))
     }
     if let version {
         try? Data(version.utf8).write(to: dir.appendingPathComponent("version.txt"))
     }
 }
 
-@Test func shouldCopyTruthTable() {
-    // 没有内置资源 → 永远不拷
-    #expect(XrayBootstrap.shouldCopy(bundledVersion: nil, onDiskVersion: nil, filesPresent: false) == false)
-    // 首次：文件不在 → 拷
-    #expect(XrayBootstrap.shouldCopy(bundledVersion: "v1", onDiskVersion: nil, filesPresent: false) == true)
-    // 已装且版本一致 → 不拷
-    #expect(XrayBootstrap.shouldCopy(bundledVersion: "v1", onDiskVersion: "v1", filesPresent: true) == false)
-    // App 升级换了内核 → 重拷
-    #expect(XrayBootstrap.shouldCopy(bundledVersion: "v2", onDiskVersion: "v1", filesPresent: true) == true)
-    // 版本一致但文件被用户删了 → 补拷
-    #expect(XrayBootstrap.shouldCopy(bundledVersion: "v1", onDiskVersion: "v1", filesPresent: false) == true)
+@Test func shouldCopyCoreSemverRules() {
+    // 缺失 → 拷
+    #expect(XrayBootstrap.shouldCopyCore(bundledVersion: "v26.3.27", onDiskVersion: nil, present: false))
+    // 内置比已装新（App 升级）→ 拷
+    #expect(XrayBootstrap.shouldCopyCore(bundledVersion: "v26.4.1", onDiskVersion: "v26.3.27", present: true))
+    // 已装比内置新（运行时更新过）→ 不冲掉
+    #expect(!XrayBootstrap.shouldCopyCore(bundledVersion: "v26.3.27", onDiskVersion: "v26.6.6", present: true))
+    // 相同 → 不拷
+    #expect(!XrayBootstrap.shouldCopyCore(bundledVersion: "v26.3.27", onDiskVersion: "v26.3.27", present: true))
+    // 没内置资源 → 不拷
+    #expect(!XrayBootstrap.shouldCopyCore(bundledVersion: nil, onDiskVersion: nil, present: false))
 }
 
-@Test func ensureCopiesAllThreeAndStamps() throws {
-    let root = URL(fileURLWithPath: NSTemporaryDirectory())
-        .appendingPathComponent("proxy-boot-\(UUID().uuidString)")
-    defer { try? FileManager.default.removeItem(at: root) }
-    let bundle = root.appendingPathComponent("bundle")
-    let work = root.appendingPathComponent("Proxy")
-    makeBundle(bundle, version: "v9")
+@Test func shouldSeedRulesOnlyWhenMissing() {
+    #expect(XrayBootstrap.shouldSeedRules(present: false))
+    #expect(!XrayBootstrap.shouldSeedRules(present: true))   // 运行时更新过的 dat 不被 App 重启冲掉
+}
 
-    let result = XrayBootstrap.ensure(bundledDir: bundle, workDir: work)
-    let xrayURL = try #require(try? result.get())
+@Test func ensureCopiesCoreAndDatAndStamps() throws {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("boot-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let bundle = root.appendingPathComponent("bundle"), work = root.appendingPathComponent("Proxy")
+    makeBundle(bundle, version: "v26.3.27")
+    let xrayURL = try XrayBootstrap.ensure(bundledDir: bundle, workDir: work).get()
     #expect(xrayURL.lastPathComponent == "xray")
     let fm = FileManager.default
-    for f in XrayBootstrap.assetFiles {
+    for f in XrayBootstrap.coreFiles + XrayBootstrap.ruleFiles {
         #expect(fm.fileExists(atPath: work.appendingPathComponent(f).path))
     }
-    // 可执行位补上了
     #expect(fm.isExecutableFile(atPath: work.appendingPathComponent("xray").path))
-    // 写了版本戳
-    let stamp = try String(contentsOf: work.appendingPathComponent(".xray-version"), encoding: .utf8)
-    #expect(stamp == "v9")
+    let stamp = try String(contentsOf: work.appendingPathComponent(XrayBootstrap.coreStampName), encoding: .utf8)
+    #expect(stamp == "v26.3.27")
 }
 
-@Test func ensureIsIdempotentThenRecopiesOnVersionBump() throws {
-    let root = URL(fileURLWithPath: NSTemporaryDirectory())
-        .appendingPathComponent("proxy-boot2-\(UUID().uuidString)")
+@Test func ensurePreservesNewerRuntimeCoreAndUpdatedDat() throws {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("boot2-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: root) }
-    let bundle = root.appendingPathComponent("bundle")
-    let work = root.appendingPathComponent("Proxy")
-    makeBundle(bundle, version: "v9")
+    let bundle = root.appendingPathComponent("bundle"), work = root.appendingPathComponent("Proxy")
+    makeBundle(bundle, version: "v26.3.27")
     _ = XrayBootstrap.ensure(bundledDir: bundle, workDir: work)
-
-    // 篡改工作目录内容，再 ensure 一次：版本没变且文件在 → 不该重拷（内容仍是篡改值）
-    let marker = work.appendingPathComponent("geoip.dat")
-    try Data("tampered".utf8).write(to: marker)
+    // 模拟运行时更新：把已装内核版本戳改新、把 dat 内容改掉
+    try "v99.0.0".write(to: work.appendingPathComponent(XrayBootstrap.coreStampName), atomically: true, encoding: .utf8)
+    try Data("updated-rules".utf8).write(to: work.appendingPathComponent("geoip.dat"))
+    // 再 ensure 一次（App 重启）
     _ = XrayBootstrap.ensure(bundledDir: bundle, workDir: work)
-    #expect(String(decoding: FileManager.default.contents(atPath: marker.path)!, as: UTF8.self) == "tampered")
-
-    // 内置版本升了 → 应重拷，覆盖掉篡改内容
-    makeBundle(bundle, version: "v10")
-    _ = XrayBootstrap.ensure(bundledDir: bundle, workDir: work)
-    #expect(String(decoding: FileManager.default.contents(atPath: marker.path)!, as: UTF8.self) != "tampered")
+    // 内置 v26 不比已装 v99 新 → 内核戳保持 v99
+    let stamp = try String(contentsOf: work.appendingPathComponent(XrayBootstrap.coreStampName), encoding: .utf8)
+    #expect(stamp == "v99.0.0")
+    // dat 已存在 → 不重播种 → 运行时更新的内容保留
+    let dat = try String(contentsOf: work.appendingPathComponent("geoip.dat"), encoding: .utf8)
+    #expect(dat == "updated-rules")
 }
 
 @Test func ensureFailsWithoutBundledAssets() throws {
-    let root = URL(fileURLWithPath: NSTemporaryDirectory())
-        .appendingPathComponent("proxy-boot3-\(UUID().uuidString)")
+    let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("boot3-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: root) }
-    let bundle = root.appendingPathComponent("bundle")   // 空的，没 version.txt
-    let work = root.appendingPathComponent("Proxy")
+    let bundle = root.appendingPathComponent("bundle")
     try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
-    let r = XrayBootstrap.ensure(bundledDir: bundle, workDir: work)
-    #expect(r.failure == .some(XrayBootstrap.BootstrapError.noBundledAssets))
-}
-
-extension Result {
-    var failure: Failure? { if case .failure(let e) = self { return e }; return nil }
+    let r = XrayBootstrap.ensure(bundledDir: bundle, workDir: root.appendingPathComponent("Proxy"))
+    #expect(r == .failure(.noBundledAssets))
 }

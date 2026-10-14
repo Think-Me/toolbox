@@ -108,6 +108,15 @@ public struct ProxyNode: Codable, Equatable, Identifiable, Sendable {
 public enum ProxyRoutingMode: String, Codable, Sendable, CaseIterable, Equatable {
     case global          // 全局：一切走代理
     case bypassMainland  // 绕过大陆：大陆 IP/域名直连，其余走代理
+    case gfwList         // GFW 列表：只有命中 gfwlist 的走代理，其余直连
+
+    public var label: String {
+        switch self {
+        case .global: return "全局（全部走代理）"
+        case .bypassMainland: return "绕过大陆（大陆直连，其余代理）"
+        case .gfwList: return "GFW 列表（仅列表内走代理）"
+        }
+    }
 }
 
 /// 代理运行配置（端口等）。端口默认对齐机器上已存在的 10808 习惯。

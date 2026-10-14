@@ -11,6 +11,9 @@ public final class ProxyViewModel: ObservableObject {
     @Published public var message: String?
     @Published public var addField = ""
     @Published public var latencyText: String?
+    @Published public var updateInfo: UpdateInfo?
+    @Published public var updateBusy = false
+    @Published public var updateMessage: String?
 
     private let store: ProxyStore
     private let paths: AppPaths
@@ -111,6 +114,43 @@ public final class ProxyViewModel: ObservableObject {
         case .milliseconds(let ms): latencyText = "延迟 \(ms) ms"
         case .failed(let m): latencyText = "不通：\(m)"
         }
+    }
+
+    // MARK: 更新
+
+    public func checkForUpdates() async {
+        updateBusy = true
+        updateMessage = "检查中…"
+        let info = await UpdateService.check(paths: paths)
+        updateInfo = info
+        updateBusy = false
+        updateMessage = (info.coreUpdateAvailable || info.rulesUpdateAvailable) ? "有可用更新" : "已是最新"
+    }
+
+    public func applyCoreUpdate() async {
+        guard let tag = updateInfo?.coreLatest, tag != updateInfo?.coreCurrent else { return }
+        updateBusy = true
+        switch await UpdateService.applyCoreUpdate(tag: tag, paths: paths) {
+        case .success:
+            updateMessage = "内核已更新到 \(tag)"
+            if isEngineRunning { restart() }
+            await checkForUpdates()
+        case .failure(let e): updateMessage = "内核更新失败：\(e)"
+        }
+        updateBusy = false
+    }
+
+    public func applyRulesUpdate() async {
+        guard let tag = updateInfo?.rulesLatest else { return }
+        updateBusy = true
+        switch await UpdateService.applyRulesUpdate(tag: tag, paths: paths) {
+        case .success:
+            updateMessage = "规则库已更新到 \(tag)"
+            if isEngineRunning { restart() }
+            await checkForUpdates()
+        case .failure(let e): updateMessage = "规则库更新失败：\(e)"
+        }
+        updateBusy = false
     }
 
     // MARK: 系统代理

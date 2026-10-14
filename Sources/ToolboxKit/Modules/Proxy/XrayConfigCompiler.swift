@@ -18,11 +18,7 @@ public enum XrayConfigCompiler {
                 .init(port: runtime.httpPort, protocol: "http", listen: "127.0.0.1",
                       tag: "http-in", settings: nil),
             ],
-            outbounds: [
-                proxyOutbound(node: node),
-                .init(tag: "direct", protocol: "freedom", settings: .empty, streamSettings: nil),
-                .init(tag: "block", protocol: "blackhole", settings: .empty, streamSettings: nil),
-            ],
+            outbounds: outbounds(node: node, mode: runtime.routingMode),
             routing: routing(mode: runtime.routingMode))
     }
 
@@ -34,6 +30,19 @@ public enum XrayConfigCompiler {
     }
 
     // MARK: outbound
+
+    /// xray 用 outbounds 数组的**第一个**作默认出口。
+    /// GFW 模式默认要 direct（只有命中 gfwlist 才 proxy），所以把 direct 排到最前；
+    /// 其余模式默认 proxy。
+    private static func outbounds(node: ProxyNode, mode: ProxyRoutingMode) -> [XrayConfig.Outbound] {
+        let proxy = proxyOutbound(node: node)
+        let direct = XrayConfig.Outbound(tag: "direct", protocol: "freedom", settings: .empty, streamSettings: nil)
+        let block = XrayConfig.Outbound(tag: "block", protocol: "blackhole", settings: .empty, streamSettings: nil)
+        switch mode {
+        case .gfwList: return [direct, proxy, block]
+        default:       return [proxy, direct, block]
+        }
+    }
 
     private static func proxyOutbound(node: ProxyNode) -> XrayConfig.Outbound {
         let settings: XrayConfig.OutboundSettings
@@ -100,9 +109,15 @@ public enum XrayConfigCompiler {
             // DNS 查询直连，避免解析被代理污染
             .init(type: "field", ip: nil, domain: nil, protocols: ["dns"], outboundTag: "direct"),
         ]
-        if mode == .bypassMainland {
+        switch mode {
+        case .bypassMainland:
             rules.append(.init(type: "field", ip: nil, domain: ["geosite:cn"], protocols: nil, outboundTag: "direct"))
             rules.append(.init(type: "field", ip: ["geoip:cn"], domain: nil, protocols: nil, outboundTag: "direct"))
+        case .gfwList:
+            // 只有命中 gfwlist 的域名走代理，其余落到默认出口 direct
+            rules.append(.init(type: "field", ip: nil, domain: ["geosite:gfw"], protocols: nil, outboundTag: "proxy"))
+        case .global:
+            break
         }
         return .init(domainStrategy: "AsIs", rules: rules)
     }

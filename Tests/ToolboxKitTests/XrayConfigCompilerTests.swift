@@ -165,3 +165,44 @@ private func rules(_ root: [String: Any]) -> [[String: Any]] {
     #expect(x["path"] as? String == "/")
     #expect(x["mode"] as? String == "auto")
 }
+
+@Test func gfwModeDefaultsToDirectAndProxiesOnlyGfw() {
+    let root = json(ProxyNode(name: "n", kind: .vmess, server: "s", port: 1, uuid: "u"), .gfwList)
+    let tags = ((root["outbounds"] as? [[String: Any]]) ?? []).compactMap { $0["tag"] as? String }
+    #expect(tags.first == "direct")     // GFW 模式默认直连
+    let r = rules(root)
+    #expect(r.contains { ($0["domain"] as? [String])?.contains("geosite:gfw") == true && $0["outboundTag"] as? String == "proxy" })
+}
+
+@Test func globalAndBypassStillDefaultToProxy() {
+    for mode in [ProxyRoutingMode.global, .bypassMainland] {
+        let root = json(ProxyNode(name: "n", kind: .vmess, server: "s", port: 1, uuid: "u"), mode)
+        let tags = ((root["outbounds"] as? [[String: Any]]) ?? []).compactMap { $0["tag"] as? String }
+        #expect(tags.first == "proxy")
+    }
+}
+
+@Test func gfwConfigBootsXray() throws {
+    // geosite:gfw 码必须存在于内置 dat，否则启动即失败
+    let repoRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let vendor = repoRoot.appendingPathComponent("Vendor/xray")
+    let xray = vendor.appendingPathComponent("xray")
+    guard FileManager.default.isExecutableFile(atPath: xray.path) else { return }
+    let tmp = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("gfw-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+    for f in ["geoip.dat", "geosite.dat"] {
+        try? FileManager.default.createSymbolicLink(at: tmp.appendingPathComponent(f), withDestinationURL: vendor.appendingPathComponent(f))
+    }
+    let node = ProxyNode(name: "t", kind: .vmess, server: "127.0.0.1", port: 443, uuid: "u")
+    let cfg = tmp.appendingPathComponent("config.json")
+    try XrayConfigCompiler.compileData(node: node,
+        runtime: .init(socksPort: 20811, httpPort: 20812, routingMode: .gfwList)).write(to: cfg)
+    let p = Process(); p.executableURL = xray; p.arguments = ["run", "-c", cfg.path]
+    p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+    try p.run(); usleep(1_500_000)
+    let died = !p.isRunning
+    if p.isRunning { p.terminate(); p.waitUntilExit() }
+    #expect(died == false, "geosite:gfw 配置应能启动")
+}

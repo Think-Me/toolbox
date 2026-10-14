@@ -14,6 +14,8 @@ struct ProxyTabView: View {
                 Divider()
                 settingsSection
                 controlsSection
+                Divider()
+                updateSection
             }
             .padding(16)
         }
@@ -102,8 +104,9 @@ struct ProxyTabView: View {
             Picker("路由模式", selection: Binding(
                 get: { vm.library.runtime.routingMode },
                 set: { vm.setMode($0) })) {
-                Text("绕过大陆（大陆直连，其余代理）").tag(ProxyRoutingMode.bypassMainland)
-                Text("全局（全部走代理）").tag(ProxyRoutingMode.global)
+                ForEach(ProxyRoutingMode.allCases, id: \.self) { mode in
+                    Text(mode.label).tag(mode)
+                }
             }
             .pickerStyle(.radioGroup)
             HStack(spacing: 16) {
@@ -118,6 +121,41 @@ struct ProxyTabView: View {
             Text(label).font(.system(size: 11))
             Stepper("\(value)", value: Binding(get: { value }, set: set), in: 1...65535)
                 .font(.system(size: 11, design: .monospaced))
+        }
+    }
+
+    // MARK: 更新
+
+    private var updateSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("更新").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                Spacer()
+                Button(vm.updateBusy ? "检查中…" : "检查更新") { Task { await vm.checkForUpdates() } }
+                    .disabled(vm.updateBusy).controlSize(.small)
+            }
+            if let info = vm.updateInfo {
+                row("内核", current: info.coreCurrent, latest: info.coreLatest,
+                    available: info.coreUpdateAvailable) { Task { await vm.applyCoreUpdate() } }
+                row("规则库(geoip/geosite)", current: info.rulesCurrent ?? "内置", latest: info.rulesLatest,
+                    available: info.rulesUpdateAvailable) { Task { await vm.applyRulesUpdate() } }
+            }
+            if let m = vm.updateMessage {
+                Text(m).font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func row(_ label: String, current: String, latest: String?, available: Bool,
+                     update: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            Text(label).font(.system(size: 11))
+            Text(current).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+            if let latest, available {
+                Text("→ \(latest)").font(.system(size: 11, design: .monospaced)).foregroundStyle(.orange)
+                Button("更新", action: update).disabled(vm.updateBusy).controlSize(.mini)
+            }
+            Spacer()
         }
     }
 
