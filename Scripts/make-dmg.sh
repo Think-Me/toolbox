@@ -21,6 +21,12 @@ echo "复制 $APP 到镜像暂存…"
 ditto "$APP" "$STAGING/$VOLNAME.app"
 ln -s /Applications "$STAGING/Applications"
 
+# 安装助手：用户拖完 app 后双击它，解除 Gatekeeper 隔离 + 权限指引 + 启动
+if [ -f "Scripts/dmg-assets/解除隔离.command" ]; then
+    cp "Scripts/dmg-assets/解除隔离.command" "$STAGING/解除隔离.command"
+    chmod +x "$STAGING/解除隔离.command"
+fi
+
 rm -f "$DMG"
 echo "生成 $DMG…"
 hdiutil create \
