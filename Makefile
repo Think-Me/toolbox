@@ -1,4 +1,4 @@
-.PHONY: app run test build clean perms smoke
+.PHONY: app run test build clean perms smoke dmg
 
 CONFIG ?= debug
 
@@ -13,6 +13,10 @@ app:
 
 run: app
 	open Build/Toolbox.app
+
+# 打包成可分发的 .dmg（依赖已构建的 .app）
+dmg: app
+	./Scripts/make-dmg.sh
 
 # 任务 5 的端到端冒烟：先编译合成器，起监听，再合成 ⌃⌘A。
 # 期望输出 register=true 后紧跟 FIRED。没 FIRED 的排查顺序：
