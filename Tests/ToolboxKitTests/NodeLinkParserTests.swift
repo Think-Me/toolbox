@@ -155,3 +155,15 @@ private func ok(_ link: String) throws -> ProxyNode {
     let n = try ok(link)
     #expect(n.server == "1.2.3.4")
 }
+
+@Test func parsesVlessXhttpReality() throws {
+    // 用户真实节点：vless + xhttp + reality。曾因 transport 不认 xhttp 退化成 tcp，
+    // 导致服务器回 HTTP、报 "unexpected response version"。
+    let link = "vless://uuid@derp.example.vip:8080?encryption=none&security=reality"
+        + "&sni=tms.dingtalk.com&fp=chrome&type=xhttp&path=%2F&pbk=PUB&sid=71#BWH"
+    let n = try ok(link)
+    #expect(n.transport == .xhttp)
+    #expect(n.isReality && n.useTLS)
+    #expect(n.path == "/")
+    #expect(n.publicKey == "PUB" && n.shortID == "71")
+}

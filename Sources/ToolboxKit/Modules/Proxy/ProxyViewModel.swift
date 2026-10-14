@@ -106,7 +106,7 @@ public final class ProxyViewModel: ObservableObject {
     public func testLatency() async {
         guard isEngineRunning else { latencyText = "先启动代理"; return }
         latencyText = "测试中…"
-        let r = await LatencyProbe.measureThroughSocks(port: library.runtime.socksPort)
+        let r = await LatencyProbe.measureThroughProxy(port: library.runtime.httpPort)
         switch r {
         case .milliseconds(let ms): latencyText = "延迟 \(ms) ms"
         case .failed(let m): latencyText = "不通：\(m)"

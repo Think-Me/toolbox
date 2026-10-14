@@ -98,7 +98,7 @@ Ethernet Address: cc:dd
 
 @Test func socksProxyDictPointsAtLoopback() {
     let d = LatencyProbe.socksProxyDict(port: 10808)
-    #expect(d["SOCKSEnabled"] as? Int == 1)
+    #expect(d["SOCKSEnable"] as? Int == 1)
     #expect(d["SOCKSProxy"] as? String == "127.0.0.1")
     #expect(d["SOCKSPort"] as? Int == 10808)
 }

@@ -42,6 +42,7 @@ public enum NodeLinkParser {
         case "ws", "websocket": return .ws
         case "grpc", "gun":     return .grpc
         case "http", "h2":      return .http
+        case "xhttp", "raw":    return .xhttp   // v2rayN 新节点常用 xhttp；raw 是别名
         default:                return .tcp
         }
     }

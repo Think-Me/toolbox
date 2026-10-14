@@ -14,7 +14,10 @@ public enum LatencyProbe {
 
     public static func socksProxyDict(port: Int) -> [AnyHashable: Any] {
         [
-            "SOCKSEnabled": 1,
+            // 键名必须是 "SOCKSEnable"（不是 SOCKSEnabled）：写错的话 URLSession
+            // 当没配代理、直连目标 → 国内直连 gstatic 被墙 → 报 SSL 错，
+            // 表现成"代理不通"，其实是探针没走代理（实测踩过）。
+            "SOCKSEnable": 1,
             "SOCKSProxy": "127.0.0.1",
             "SOCKSPort": port,
         ]
@@ -28,11 +31,15 @@ public enum LatencyProbe {
         ]
     }
 
-    /// 经 SOCKS 代理请求 url，返回耗时（ms）或失败原因。
-    public static func measureThroughSocks(port: Int, url: URL = defaultURL,
+    /// 经 HTTP 代理请求 url，返回耗时（ms）或失败原因。
+    ///
+    /// 用 HTTP 而不是 SOCKS：URLSession 走 SOCKS 会**本地先解析域名**再交给代理，
+    /// 国内把 gstatic/google 解析成污染 IP → TLS 握手失败报 SSL 错，
+    /// 明明代理是通的却测出"不通"。HTTP 代理的 CONNECT 带域名，由 xray 远端解析。
+    public static func measureThroughProxy(port: Int, url: URL = defaultURL,
                                            timeout: TimeInterval = 5) async -> Outcome {
         let cfg = URLSessionConfiguration.ephemeral
-        cfg.connectionProxyDictionary = socksProxyDict(port: port)
+        cfg.connectionProxyDictionary = httpProxyDict(port: port)
         cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
         cfg.timeoutIntervalForRequest = timeout
         let session = URLSession(configuration: cfg)

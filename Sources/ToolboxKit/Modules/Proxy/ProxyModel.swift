@@ -15,7 +15,7 @@ public enum ProxyProtocolKind: String, Codable, Sendable, CaseIterable, Equatabl
 }
 
 public enum ProxyTransport: String, Codable, Sendable, Equatable {
-    case tcp, ws, grpc, http
+    case tcp, ws, grpc, http, xhttp
 
     /// xray streamSettings.network
     public var xrayNetwork: String { rawValue }

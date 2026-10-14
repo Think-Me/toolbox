@@ -152,3 +152,16 @@ private func rules(_ root: [String: Any]) -> [[String: Any]] {
     // 配置有错（含 geoip 规则写错）会让 xray 立即退出
     #expect(diedEarly == false, "xray 未能用生成的 config 启动")
 }
+
+@Test func xhttpTransportEmitsXhttpSettings() {
+    let node = ProxyNode(name: "n", kind: .vless, server: "1.2.3.4", port: 8080, uuid: "u",
+                         transport: .xhttp, path: "/", useTLS: true, sni: "s",
+                         isReality: true, publicKey: "PUB", shortID: "71")
+    let ob = outbound(json(node, .global))
+    let stream = (ob["streamSettings"] as? [String: Any]) ?? [:]
+    #expect(stream["network"] as? String == "xhttp")
+    #expect(stream["security"] as? String == "reality")
+    let x = (stream["xhttpSettings"] as? [String: Any]) ?? [:]
+    #expect(x["path"] as? String == "/")
+    #expect(x["mode"] as? String == "auto")
+}

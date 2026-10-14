@@ -74,16 +74,21 @@ public enum XrayConfigCompiler {
         }
         var ws: XrayConfig.StreamSettings.WsSettings?
         var grpc: XrayConfig.StreamSettings.GrpcSettings?
+        var xhttp: XrayConfig.StreamSettings.XhttpSettings?
         switch node.transport {
         case .ws:
             ws = .init(path: node.path.isEmpty ? "/" : node.path,
                        host: node.host.isEmpty ? nil : node.host)
         case .grpc:
             grpc = .init(serviceName: node.path.isEmpty ? "grpc" : node.path)
+        case .xhttp:
+            xhttp = .init(path: node.path.isEmpty ? "/" : node.path,
+                          host: node.host.isEmpty ? nil : node.host, mode: "auto")
         default: break
         }
         return .init(network: node.transport.xrayNetwork, security: security,
-                     tlsSettings: tls, realitySettings: reality, wsSettings: ws, grpcSettings: grpc)
+                     tlsSettings: tls, realitySettings: reality, wsSettings: ws,
+                     grpcSettings: grpc, xhttpSettings: xhttp)
     }
 
     // MARK: routing
@@ -167,6 +172,12 @@ public struct XrayConfig: Encodable {
         public let realitySettings: RealitySettings?
         public let wsSettings: WsSettings?
         public let grpcSettings: GrpcSettings?
+        public let xhttpSettings: XhttpSettings?
+        public struct XhttpSettings: Encodable {
+            public let path: String
+            public let host: String?
+            public let mode: String?
+        }
         public struct TLSSettings: Encodable {
             public let serverName: String?
             public let fingerprint: String?
