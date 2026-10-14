@@ -7,13 +7,27 @@ public protocol HTTPFetching: Sendable {
 }
 
 public struct URLSessionFetcher: HTTPFetching {
-    public init() {}
+    /// 走本地 HTTP 代理取 GitHub（国内直连常被墙/超时）。nil = 直连。
+    public let proxyPort: Int?
+    public init(proxyPort: Int? = nil) { self.proxyPort = proxyPort }
+
+    private func makeSession() -> URLSession {
+        guard let proxyPort else { return URLSession.shared }
+        let cfg = URLSessionConfiguration.ephemeral
+        // 用 HTTP 代理而非 SOCKS：HTTP CONNECT 把域名交给 xray 远端解析，
+        // 避开 URLSession 走 SOCKS 时本地 DNS 被污染的问题（§1.1 #38）
+        cfg.connectionProxyDictionary = LatencyProbe.httpProxyDict(port: proxyPort)
+        cfg.timeoutIntervalForRequest = 30
+        cfg.timeoutIntervalForResource = 300
+        return URLSession(configuration: cfg)
+    }
+
     public func get(_ url: URL) async throws -> Data {
-        let (data, _) = try await URLSession.shared.data(from: url)
+        let (data, _) = try await makeSession().data(from: url)
         return data
     }
     public func download(_ url: URL, to file: URL) async throws {
-        let (tmp, _) = try await URLSession.shared.download(from: url)
+        let (tmp, _) = try await makeSession().download(from: url)
         if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
         try FileManager.default.moveItem(at: tmp, to: file)
     }

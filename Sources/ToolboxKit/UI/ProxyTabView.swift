@@ -128,11 +128,22 @@ struct ProxyTabView: View {
 
     private var updateSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            HStack(spacing: 8) {
                 Text("更新").font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
                 Spacer()
+                // GitHub 国内直连常失败；走本地代理需内核已在跑
+                Picker("", selection: $vm.updateViaProxy) {
+                    Text("直连").tag(false)
+                    Text("走代理").tag(true)
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                .disabled(!vm.isEngineRunning)
                 Button(vm.updateBusy ? "检查中…" : "检查更新") { Task { await vm.checkForUpdates() } }
                     .disabled(vm.updateBusy).controlSize(.small)
+            }
+            if vm.updateViaProxy && !vm.isEngineRunning {
+                Text("走代理需先启动代理，否则自动改用直连")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
             }
             if let info = vm.updateInfo {
                 row("内核", current: info.coreCurrent, latest: info.coreLatest,

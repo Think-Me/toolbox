@@ -14,6 +14,9 @@ public final class ProxyViewModel: ObservableObject {
     @Published public var updateInfo: UpdateInfo?
     @Published public var updateBusy = false
     @Published public var updateMessage: String?
+    /// 检查/更新走本地代理还是直连。GitHub 国内直连常失败，
+    /// 但走代理要求内核已在跑（否则没有代理可走），所以默认直连、由用户切。
+    @Published public var updateViaProxy = false
 
     private let store: ProxyStore
     private let paths: AppPaths
@@ -118,10 +121,22 @@ public final class ProxyViewModel: ObservableObject {
 
     // MARK: 更新
 
+    /// 按用户选择构造 fetcher；选了走代理但内核没跑，自动退回直连并说明。
+    private func updateFetcher() -> (fetcher: any HTTPFetching, note: String?) {
+        if updateViaProxy {
+            if isEngineRunning {
+                return (URLSessionFetcher(proxyPort: library.runtime.httpPort), nil)
+            }
+            return (URLSessionFetcher(), "代理未运行，本次改用直连")
+        }
+        return (URLSessionFetcher(), nil)
+    }
+
     public func checkForUpdates() async {
         updateBusy = true
-        updateMessage = "检查中…"
-        let info = await UpdateService.check(paths: paths)
+        let (fetcher, note) = updateFetcher()
+        updateMessage = note ?? "检查中…"
+        let info = await UpdateService.check(paths: paths, fetcher: fetcher)
         updateInfo = info
         updateBusy = false
         updateMessage = (info.coreUpdateAvailable || info.rulesUpdateAvailable) ? "有可用更新" : "已是最新"
@@ -130,7 +145,8 @@ public final class ProxyViewModel: ObservableObject {
     public func applyCoreUpdate() async {
         guard let tag = updateInfo?.coreLatest, tag != updateInfo?.coreCurrent else { return }
         updateBusy = true
-        switch await UpdateService.applyCoreUpdate(tag: tag, paths: paths) {
+        let (fetcher, _) = updateFetcher()
+        switch await UpdateService.applyCoreUpdate(tag: tag, paths: paths, fetcher: fetcher) {
         case .success:
             updateMessage = "内核已更新到 \(tag)"
             if isEngineRunning { restart() }
@@ -143,7 +159,8 @@ public final class ProxyViewModel: ObservableObject {
     public func applyRulesUpdate() async {
         guard let tag = updateInfo?.rulesLatest else { return }
         updateBusy = true
-        switch await UpdateService.applyRulesUpdate(tag: tag, paths: paths) {
+        let (fetcher, _) = updateFetcher()
+        switch await UpdateService.applyRulesUpdate(tag: tag, paths: paths, fetcher: fetcher) {
         case .success:
             updateMessage = "规则库已更新到 \(tag)"
             if isEngineRunning { restart() }
