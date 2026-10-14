@@ -39,7 +39,7 @@ public final class ClipboardRootView: NSView {
 
 /// 尺寸与配色常量。集中一处，改视觉不用翻文件。
 enum ClipboardStyle {
-    static let panelWidth: CGFloat = 360
+    static let panelWidth: CGFloat = 280
     /// 头部（标题 + 搜索框 + 与列表的间距）实际占的高度。
     /// 面板总高按它算，所以这个值必须和 updateNSView 里的布局一致。
     static let headerHeight: CGFloat = 46
@@ -282,6 +282,11 @@ public final class ClipboardCellView: NSTableCellView {
         super.init(frame: frameRect)
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.wantsLayer = true
+        icon.layer?.cornerRadius = 6
+        icon.layer?.masksToBounds = true
+        icon.layer?.borderColor = NSColor.separatorColor.cgColor
+        icon.layer?.borderWidth = 0
         title.translatesAutoresizingMaskIntoConstraints = false
         title.font = .systemFont(ofSize: 13)
         title.textColor = ClipboardStyle.primaryText
@@ -302,8 +307,6 @@ public final class ClipboardCellView: NSTableCellView {
             icon.leadingAnchor.constraint(equalTo: leadingAnchor,
                                           constant: ClipboardStyle.inset),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 18),
-            icon.heightAnchor.constraint(equalToConstant: 18),
             chevron.trailingAnchor.constraint(equalTo: trailingAnchor,
                                               constant: -ClipboardStyle.inset),
             chevron.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -312,6 +315,7 @@ public final class ClipboardCellView: NSTableCellView {
             title.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
             title.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
+        setIconSize(18, 18)   // 默认按文本行大小；configure 会按类型改
     }
 
     required init?(coder: NSCoder) { fatalError("不支持从 nib 构造") }
@@ -325,8 +329,11 @@ public final class ClipboardCellView: NSTableCellView {
 
         switch item.kind {
         case .image:
+            // 图片行：接近正方形的缩略图 + 无文字标题（对齐参考样式）
+            title.isHidden = true
+            setIconSize(ClipboardStyle.thumbnail, ClipboardStyle.thumbnail)
+            icon.layer?.borderWidth = 1
             icon.image = nil
-            iconWidth(ClipboardStyle.thumbnail)
             if let sha = item.mediaSHA256, let media {
                 _ = thumbnails.image(forSHA: sha, from: media, maxPixel: 160) { [weak self] img in
                     // 复用池里的 cell 可能已被派给别的行，回来时必须再核对
@@ -335,21 +342,27 @@ public final class ClipboardCellView: NSTableCellView {
                 }
             }
         case .fileURLs:
-            iconWidth(18)
+            title.isHidden = false
+            setIconSize(18, 18)
+            icon.layer?.borderWidth = 0
             icon.image = NSImage(systemSymbolName: "doc", accessibilityDescription: "文件")
             icon.contentTintColor = ClipboardStyle.secondaryText
         case .text:
-            iconWidth(18)
+            title.isHidden = false
+            setIconSize(18, 18)
+            icon.layer?.borderWidth = 0
             icon.image = nil
         }
     }
 
-    private var widthConstraint: NSLayoutConstraint?
-    private func iconWidth(_ w: CGFloat) {
-        widthConstraint?.isActive = false
-        let c = icon.widthAnchor.constraint(equalToConstant: w)
-        c.isActive = true
-        widthConstraint = c
+    private var sizeConstraints: [NSLayoutConstraint] = []
+    /// 同时设 icon 的宽高。之前只调宽不调高，图片缩略图被压成 56×18 的扁条。
+    private func setIconSize(_ w: CGFloat, _ h: CGFloat) {
+        sizeConstraints.forEach { $0.isActive = false }
+        let wc = icon.widthAnchor.constraint(equalToConstant: w)
+        let hc = icon.heightAnchor.constraint(equalToConstant: h)
+        wc.isActive = true; hc.isActive = true
+        sizeConstraints = [wc, hc]
     }
 
     static func dequeue(from table: NSTableView) -> ClipboardCellView {
