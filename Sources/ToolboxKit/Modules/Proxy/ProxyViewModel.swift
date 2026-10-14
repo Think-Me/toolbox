@@ -10,6 +10,7 @@ public final class ProxyViewModel: ObservableObject {
     @Published public var systemProxyOn = false
     @Published public var message: String?
     @Published public var addField = ""
+    @Published public var latencyText: String?
 
     private let store: ProxyStore
     private let paths: AppPaths
@@ -99,6 +100,17 @@ public final class ProxyViewModel: ObservableObject {
     private func restart() {
         guard let node = activeNode else { return }
         runner.update(config: XrayConfigCompiler.compileData(node: node, runtime: library.runtime))
+    }
+
+    /// 经本地 SOCKS 打一次真实请求测延迟。需要内核在跑且有可用节点。
+    public func testLatency() async {
+        guard isEngineRunning else { latencyText = "先启动代理"; return }
+        latencyText = "测试中…"
+        let r = await LatencyProbe.measureThroughSocks(port: library.runtime.socksPort)
+        switch r {
+        case .milliseconds(let ms): latencyText = "延迟 \(ms) ms"
+        case .failed(let m): latencyText = "不通：\(m)"
+        }
     }
 
     // MARK: 系统代理

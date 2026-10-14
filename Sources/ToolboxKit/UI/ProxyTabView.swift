@@ -28,6 +28,11 @@ struct ProxyTabView: View {
                 Circle().fill(engineColor).frame(width: 10, height: 10)
                 Text(engineLabel).font(.system(size: 13, weight: .medium))
                 Spacer()
+                if let lat = vm.latencyText {
+                    Text(lat).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                }
+                Button("测延迟") { Task { await vm.testLatency() } }
+                    .controlSize(.small)
                 if vm.systemProxyOn {
                     Text("系统代理：开").font(.system(size: 11)).foregroundStyle(.secondary)
                 }

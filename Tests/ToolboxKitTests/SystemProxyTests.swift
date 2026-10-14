@@ -93,3 +93,18 @@ Ethernet Address: cc:dd
     let offs = r.ran.filter { $0.1.first?.hasSuffix("proxystate") == true }
     #expect(offs.count == 3)
 }
+
+// MARK: 延迟探针的代理字典（纯函数部分）
+
+@Test func socksProxyDictPointsAtLoopback() {
+    let d = LatencyProbe.socksProxyDict(port: 10808)
+    #expect(d["SOCKSEnabled"] as? Int == 1)
+    #expect(d["SOCKSProxy"] as? String == "127.0.0.1")
+    #expect(d["SOCKSPort"] as? Int == 10808)
+}
+
+@Test func httpProxyDictPointsAtLoopback() {
+    let d = LatencyProbe.httpProxyDict(port: 10809)
+    #expect(d["HTTPEnable"] as? Int == 1)
+    #expect(d["HTTPPort"] as? Int == 10809)
+}
