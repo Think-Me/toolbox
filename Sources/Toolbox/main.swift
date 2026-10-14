@@ -512,6 +512,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 return
             }
+            if CommandLine.arguments.contains("--rules-update-probe") {
+                // 真实跑一遍规则库更新（直连），确认进度回调 + 文件替换 + 版本戳
+                Task { @MainActor in
+                    final class P: @unchecked Sendable { var ticks = 0; var last = -1.0 }
+                    let p = P()
+                    let info = await UpdateService.check(paths: AppPaths.standard(), fetcher: URLSessionFetcher())
+                    guard let tag = info.rulesLatest else { log("RULESUPD 拿不到最新版本\n"); NSApp.terminate(nil); return }
+                    let r = await UpdateService.applyRulesUpdate(tag: tag, paths: AppPaths.standard(),
+                                                                 fetcher: URLSessionFetcher()) { prog in
+                        p.ticks += 1; p.last = prog
+                    }
+                    let geo = ((try? Data(contentsOf: AppPaths.standard().proxyDirectory.appendingPathComponent("geoip.dat")))?.count) ?? 0
+                    let stamp = (try? String(contentsOf: AppPaths.standard().proxyDirectory.appendingPathComponent("rules-version"), encoding: .utf8)) ?? "?"
+                    switch r {
+                    case .success: log("RULESUPD ok tag=\(tag) 进度回调次数=\(p.ticks) 末次=\(p.last) geoip字节=\(geo) 戳=\(stamp)\n")
+                    case .failure(let e): log("RULESUPD 失败 \(e)\n")
+                    }
+                    NSApp.terminate(nil)
+                }
+                return
+            }
+            if CommandLine.arguments.contains("--update-run-probe") {
+                // 验证 delegate 下载 + 进度回调这条真实路径（下个小 JSON，直连）
+                Task { @MainActor in
+                    let tmp = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("updprobe-\(UUID().uuidString).json")
+                    final class Prog: @unchecked Sendable { var last = -1.0 }
+                    let prog = Prog()
+                    let f = URLSessionFetcher()
+                    do {
+                        try await f.download(UpdateEndpoints.xrayAPI, to: tmp) { p in prog.last = p }
+                        let size = (try? Data(contentsOf: tmp).count) ?? 0
+                        let tag = UpdateService.tag(fromReleaseJSON: (try? Data(contentsOf: tmp)) ?? Data()) ?? "?"
+                        log("UPDPROBE ok 末次进度=\(prog.last) bytes=\(size) tag=\(tag)\n")
+                    } catch { log("UPDPROBE 失败 \(error)\n") }
+                    try? FileManager.default.removeItem(at: tmp)
+                    NSApp.terminate(nil)
+                }
+                return
+            }
             if CommandLine.arguments.contains("--proxy-preview") {
                 self.showSettings(initialTab: 4)
                 return
@@ -560,7 +600,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                              "--perms", "--smoke-hotkey", "--settings-preview",
                              "--grant-screen", "--capture-probe", "--pin-demo",
                              "--hosts-e2e", "--menu-probe", "--paste-probe",
-                             "--overlay-preview", "--clip-preview", "--text-probe", "--proxy-preview", "--proxy-run-probe"]
+                             "--overlay-preview", "--clip-preview", "--text-probe", "--proxy-preview", "--proxy-run-probe", "--update-run-probe", "--rules-update-probe"]
     /// 实验：策略在 finishLaunching 之后再改可能完不成激活握手，
     /// 所以 --regular-mode 在 app.run() 之前就把策略定成 .regular。
     static var earlyRegular: Bool { CommandLine.arguments.contains("--regular-mode") }

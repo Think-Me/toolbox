@@ -13,6 +13,7 @@ public final class ProxyViewModel: ObservableObject {
     @Published public var latencyText: String?
     @Published public var updateInfo: UpdateInfo?
     @Published public var updateBusy = false
+    @Published public var updateProgress: Double?
     @Published public var updateMessage: String?
     /// 检查/更新走本地代理还是直连。GitHub 国内直连常失败，
     /// 但走代理要求内核已在跑（否则没有代理可走），所以默认直连、由用户切。
@@ -145,28 +146,40 @@ public final class ProxyViewModel: ObservableObject {
     public func applyCoreUpdate() async {
         guard let tag = updateInfo?.coreLatest, tag != updateInfo?.coreCurrent else { return }
         updateBusy = true
+        updateProgress = nil          // 未知长度时保持 nil → UI 显示不确定态
+        updateMessage = "下载内核…"
         let (fetcher, _) = updateFetcher()
-        switch await UpdateService.applyCoreUpdate(tag: tag, paths: paths, fetcher: fetcher) {
+        let r = await UpdateService.applyCoreUpdate(tag: tag, paths: paths, fetcher: fetcher) { [weak self] p in
+            Task { @MainActor in self?.updateProgress = p }
+        }
+        switch r {
         case .success:
             updateMessage = "内核已更新到 \(tag)"
             if isEngineRunning { restart() }
             await checkForUpdates()
         case .failure(let e): updateMessage = "内核更新失败：\(e)"
         }
+        updateProgress = nil
         updateBusy = false
     }
 
     public func applyRulesUpdate() async {
         guard let tag = updateInfo?.rulesLatest else { return }
         updateBusy = true
+        updateProgress = nil
+        updateMessage = "下载规则库…"
         let (fetcher, _) = updateFetcher()
-        switch await UpdateService.applyRulesUpdate(tag: tag, paths: paths, fetcher: fetcher) {
+        let r = await UpdateService.applyRulesUpdate(tag: tag, paths: paths, fetcher: fetcher) { [weak self] p in
+            Task { @MainActor in self?.updateProgress = p }
+        }
+        switch r {
         case .success:
             updateMessage = "规则库已更新到 \(tag)"
             if isEngineRunning { restart() }
             await checkForUpdates()
         case .failure(let e): updateMessage = "规则库更新失败：\(e)"
         }
+        updateProgress = nil
         updateBusy = false
     }
 

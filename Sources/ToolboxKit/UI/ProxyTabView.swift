@@ -154,6 +154,16 @@ struct ProxyTabView: View {
             if let m = vm.updateMessage {
                 Text(m).font(.system(size: 11)).foregroundStyle(.secondary)
             }
+            if vm.updateBusy {
+                if let p = vm.updateProgress {
+                    ProgressView(value: min(max(p, 0), 1)).progressViewStyle(.linear)
+                    Text("\(Int((min(max(p, 0), 1)) * 100))%")
+                        .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                } else {
+                    // 拿不到 Content-Length 时不能停在 0%，用不确定态转圈
+                    ProgressView().controlSize(.small)
+                }
+            }
         }
     }
 

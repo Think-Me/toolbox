@@ -3,7 +3,8 @@ import Foundation
 /// 拉取 URL 的抽象（注入假实现测 check 逻辑；真实用 URLSession）。
 public protocol HTTPFetching: Sendable {
     func get(_ url: URL) async throws -> Data
-    func download(_ url: URL, to file: URL) async throws
+    /// 下载到 file；progress 回调 0...1（Content-Length 未知时不回调）。
+    func download(_ url: URL, to file: URL, progress: @escaping @Sendable (Double) -> Void) async throws
 }
 
 public struct URLSessionFetcher: HTTPFetching {
@@ -18,7 +19,7 @@ public struct URLSessionFetcher: HTTPFetching {
         // 避开 URLSession 走 SOCKS 时本地 DNS 被污染的问题（§1.1 #38）
         cfg.connectionProxyDictionary = LatencyProbe.httpProxyDict(port: proxyPort)
         cfg.timeoutIntervalForRequest = 30
-        cfg.timeoutIntervalForResource = 300
+        cfg.timeoutIntervalForResource = 600
         return URLSession(configuration: cfg)
     }
 
@@ -26,10 +27,66 @@ public struct URLSessionFetcher: HTTPFetching {
         let (data, _) = try await makeSession().data(from: url)
         return data
     }
-    public func download(_ url: URL, to file: URL) async throws {
-        let (tmp, _) = try await makeSession().download(from: url)
-        if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
-        try FileManager.default.moveItem(at: tmp, to: file)
+
+    /// 下载到 file，边下边报进度。用 delegate 式 URLSession：
+    /// `download(from:)` 要等整个文件下完才返回、无进度；`AsyncBytes` 逐字节又太慢。
+    public func download(_ url: URL, to file: URL, progress: @escaping @Sendable (Double) -> Void) async throws {
+        let cfg: URLSessionConfiguration
+        if let proxyPort {
+            cfg = .ephemeral
+            cfg.connectionProxyDictionary = LatencyProbe.httpProxyDict(port: proxyPort)
+        } else {
+            cfg = .ephemeral
+        }
+        cfg.timeoutIntervalForRequest = 30
+        cfg.timeoutIntervalForResource = 600
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            let delegate = DownloadDelegate(file: file, progress: progress, cont: cont)
+            let session = URLSession(configuration: cfg, delegate: delegate, delegateQueue: nil)
+            delegate.session = session
+            session.downloadTask(with: url).resume()
+        }
+    }
+}
+
+/// 下载代理：didWriteData 报进度，didFinish 落盘，didComplete 收尾。
+private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let file: URL
+    private let progress: @Sendable (Double) -> Void
+    private let cont: CheckedContinuation<Void, Error>
+    private var finished = false
+    weak var session: URLSession?
+
+    init(file: URL, progress: @escaping @Sendable (Double) -> Void,
+         cont: CheckedContinuation<Void, Error>) {
+        self.file = file; self.progress = progress; self.cont = cont
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                    didWriteData _: Int64, totalBytesWritten written: Int64,
+                    totalBytesExpectedToWrite expected: Int64) {
+        if expected > 0 { progress(Double(written) / Double(expected)) }
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                    didFinishDownloadingTo location: URL) {
+        do {
+            if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+            try FileManager.default.moveItem(at: location, to: file)
+        } catch {
+            finish(.failure(error))
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error { finish(.failure(error)) } else { finish(.success(())) }
+        session.finishTasksAndInvalidate()
+    }
+
+    private func finish(_ r: Result<Void, Error>) {
+        guard !finished else { return }
+        finished = true
+        cont.resume(with: r)
     }
 }
 
@@ -98,20 +155,25 @@ public enum UpdateService {
 
     /// 更新规则库：下载最新 geoip.dat + geosite.dat 覆盖到工作目录，写版本戳。
     public static func applyRulesUpdate(tag: String, paths: AppPaths = .standard(),
-                                        fetcher: any HTTPFetching = URLSessionFetcher()) async -> Result<Void, UpdateError> {
+                                        fetcher: any HTTPFetching = URLSessionFetcher(),
+                                        progress: (@Sendable (Double) -> Void)? = nil) async -> Result<Void, UpdateError> {
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("rules-\(UUID().uuidString)")
+        let files = XrayBootstrap.ruleFiles
         do {
             try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
-            for name in XrayBootstrap.ruleFiles {
+            for (i, name) in files.enumerated() {
                 try await fetcher.download(UpdateEndpoints.rulesFile(tag, name),
-                                           to: tmp.appendingPathComponent(name))
+                                           to: tmp.appendingPathComponent(name)) { p in
+                    progress?((Double(i) + p) / Double(files.count))
+                }
             }
-            for name in XrayBootstrap.ruleFiles {
+            for name in files {
                 let dst = paths.proxyDirectory.appendingPathComponent(name)
                 if FileManager.default.fileExists(atPath: dst.path) { try FileManager.default.removeItem(at: dst) }
                 try FileManager.default.copyItem(at: tmp.appendingPathComponent(name), to: dst)
             }
             try tag.write(to: paths.proxyDirectory.appendingPathComponent("rules-version"), atomically: true, encoding: .utf8)
+            progress?(1)
             return .success(())
         } catch {
             return .failure(.applyFailed(String(describing: error)))
@@ -121,13 +183,15 @@ public enum UpdateService {
     /// 更新内核：下载 zip、解压出 xray、覆盖工作目录二进制、写版本戳。
     /// 运行中的 xray 进程持有旧 inode，替换文件安全；调用方需重启内核才生效。
     public static func applyCoreUpdate(tag: String, paths: AppPaths = .standard(),
-                                       fetcher: any HTTPFetching = URLSessionFetcher()) async -> Result<Void, UpdateError> {
+                                       fetcher: any HTTPFetching = URLSessionFetcher(),
+                                       progress: (@Sendable (Double) -> Void)? = nil) async -> Result<Void, UpdateError> {
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("xray-\(UUID().uuidString)")
         let zip = tmp.appendingPathComponent("xray.zip")
         let ex = tmp.appendingPathComponent("x")
         do {
             try FileManager.default.createDirectory(at: ex, withIntermediateDirectories: true)
-            try await fetcher.download(UpdateEndpoints.xrayZip(tag), to: zip)
+            // 下载占 0...0.9，解压/替换占 0.9...1
+            try await fetcher.download(UpdateEndpoints.xrayZip(tag), to: zip) { p in progress?(p * 0.9) }
             let unzip = Process()
             unzip.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
             unzip.arguments = ["-o", "-q", zip.path, "-d", ex.path]
@@ -148,6 +212,7 @@ public enum UpdateService {
             sign.standardOutput = FileHandle.nullDevice; sign.standardError = FileHandle.nullDevice
             try? sign.run(); sign.waitUntilExit()
             try tag.write(to: paths.proxyDirectory.appendingPathComponent(XrayBootstrap.coreStampName), atomically: true, encoding: .utf8)
+            progress?(1)
             return .success(())
         } catch {
             return .failure(.applyFailed(String(describing: error)))

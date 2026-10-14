@@ -49,7 +49,7 @@ private final class FakeFetcher: HTTPFetching, @unchecked Sendable {
         }
         throw URLError(.badServerResponse)
     }
-    func download(_ url: URL, to file: URL) async throws { downloads.append((url, file)) }
+    func download(_ url: URL, to file: URL, progress: @escaping @Sendable (Double) -> Void) async throws { downloads.append((url, file)) }
 }
 
 @Test @MainActor func checkReportsUpdateAvailability() async {
