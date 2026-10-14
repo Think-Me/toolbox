@@ -64,6 +64,40 @@ public struct ProxyNode: Codable, Equatable, Identifiable, Sendable {
         self.isReality = isReality; self.publicKey = publicKey; self.shortID = shortID
     }
 
+    // 宽松解码：每个字段都 decodeIfPresent 给默认值。
+    // 未来给 ProxyNode 加字段时，老库缺这些字段也能解，不会整份失败被重置。
+    private enum CodingKeys: String, CodingKey {
+        case id, name, kind, server, port, uuid, password, security, alterID, flow,
+             encryption, transport, host, path, useTLS, sni, fingerprint,
+             isReality, publicKey, shortID
+    }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func d<T: Decodable>(_ t: T.Type, _ k: CodingKeys, _ fallback: T) -> T {
+            (try? c.decodeIfPresent(t, forKey: k)) ?? nil ?? fallback
+        }
+        id = d(UUID.self, .id, UUID())
+        name = d(String.self, .name, "节点")
+        kind = d(ProxyProtocolKind.self, .kind, .vmess)
+        server = d(String.self, .server, "")
+        port = d(Int.self, .port, 0)
+        uuid = d(String.self, .uuid, "")
+        password = d(String.self, .password, "")
+        security = d(String.self, .security, "")
+        alterID = d(String.self, .alterID, "0")
+        flow = d(String.self, .flow, "")
+        encryption = d(String.self, .encryption, "none")
+        transport = d(ProxyTransport.self, .transport, .tcp)
+        host = d(String.self, .host, "")
+        path = d(String.self, .path, "")
+        useTLS = d(Bool.self, .useTLS, false)
+        sni = d(String.self, .sni, "")
+        fingerprint = d(String.self, .fingerprint, "")
+        isReality = d(Bool.self, .isReality, false)
+        publicKey = d(String.self, .publicKey, "")
+        shortID = d(String.self, .shortID, "")
+    }
+
     /// 列表里显示的摘要
     public var summary: String {
         "\(kind.rawValue) · \(server):\(port) · \(transport.rawValue)\(useTLS ? " · tls" : "")"
@@ -86,4 +120,12 @@ public struct ProxyRuntimeSettings: Codable, Equatable, Sendable {
                 routingMode: ProxyRoutingMode = .bypassMainland) {
         self.socksPort = socksPort; self.httpPort = httpPort; self.routingMode = routingMode
     }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        socksPort = (try? c.decodeIfPresent(Int.self, forKey: .socksPort)) ?? nil ?? 10808
+        httpPort = (try? c.decodeIfPresent(Int.self, forKey: .httpPort)) ?? nil ?? 10809
+        routingMode = (try? c.decodeIfPresent(ProxyRoutingMode.self, forKey: .routingMode)) ?? nil ?? .bypassMainland
+    }
+    private enum CodingKeys: String, CodingKey { case socksPort, httpPort, routingMode }
 }

@@ -26,6 +26,7 @@ public struct AppPaths: Sendable {
     /// 必须在可写目录（不能写进 .app bundle），且 .dat 要和 config.json 同目录 ——
     /// xray 按 config 文件所在目录解析 geoip.dat（spec §1.1 #35）。
     public var proxyDirectory: URL { root.appendingPathComponent("Proxy", isDirectory: true) }
+    public var proxyLibrary: URL { root.appendingPathComponent("Proxy/nodes.json") }
 
     public func ensureDirectories() throws {
         let fm = FileManager.default
