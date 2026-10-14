@@ -14,3 +14,7 @@ __pycache__/
 
 # M5 内置 xray 内核（构建期下载，不入库）
 Vendor/
+
+# 本地保留、不入库（发布时从历史剥离）
+docs/
+Design/

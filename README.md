@@ -60,9 +60,9 @@ Sources/ToolboxKit/     核心库（剪贴板 / hosts / 截图 / 代理 / 基础
 Sources/Toolbox/        可执行入口（AppDelegate、菜单、热键注册、调试探针）
 Tests/ToolboxKitTests/  单元测试
 Scripts/                构建/签名/打包脚本
-docs/                   设计文档、里程碑计划、人工验收清单
 ```
 
 ## 许可
 
-见 `LICENSE`。内置的 Xray 内核为独立二进制，遵循其上游 MPL-2.0 许可。
+本项目暂不附开源许可证（保留所有权利）。内置的 Xray 内核为独立二进制，
+遵循其上游 MPL-2.0 许可；分发时请一并遵守。
