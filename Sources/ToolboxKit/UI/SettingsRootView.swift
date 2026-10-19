@@ -20,7 +20,7 @@ public struct SettingsRootView: View {
     public var body: some View {
         TabView(selection: $selection) {
             // 权限 / 快捷键 / 通用已合成一页（用户要求）
-            GeneralTabView(model: model)
+            GeneralTabView(model: model, updater: model.softwareUpdate)
                 .tabItem { Label("通用", systemImage: "gearshape") }.tag(0)
             ClipboardTabView(model: model)
                 .tabItem { Label("剪贴板", systemImage: "doc.on.clipboard") }.tag(1)

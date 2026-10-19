@@ -581,6 +581,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.showSettings(initialTab: 4)
                 return
             }
+            if CommandLine.arguments.contains("--update-preview") {
+                self.showSettings(initialTab: 0)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    self.settingsWindow?.window?.setContentSize(NSSize(width: 560, height: 1200))
+                    self.settingsWindow?.window?.center()
+                    self.settingsWindow?.window?.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                return
+            }
             if CommandLine.arguments.contains("--settings-preview") {
                 self.showSettings()
                 if let w = self.settingsWindow?.window {
@@ -625,7 +635,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                              "--perms", "--smoke-hotkey", "--settings-preview",
                              "--grant-screen", "--capture-probe", "--pin-demo",
                              "--hosts-e2e", "--menu-probe", "--paste-probe",
-                             "--overlay-preview", "--clip-preview", "--text-probe", "--proxy-preview", "--proxy-run-probe", "--update-run-probe", "--rules-update-probe", "--app-update-probe"]
+                             "--overlay-preview", "--clip-preview", "--text-probe", "--proxy-preview", "--update-preview", "--proxy-run-probe", "--update-run-probe", "--rules-update-probe", "--app-update-probe"]
     /// 实验：策略在 finishLaunching 之后再改可能完不成激活握手，
     /// 所以 --regular-mode 在 app.run() 之前就把策略定成 .regular。
     static var earlyRegular: Bool { CommandLine.arguments.contains("--regular-mode") }

@@ -5,6 +5,7 @@ import SwiftUI
 /// 560×420 放不下三段内容，所以整页纵向滚动。
 struct GeneralTabView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject var updater: SoftwareUpdateModel
 
     var body: some View {
         ScrollView {
@@ -154,7 +155,7 @@ struct GeneralTabView: View {
     // MARK: 软件更新
 
     private var updateSection: some View {
-        let u = model.softwareUpdate
+        let u = updater
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Text("当前版本").frame(width: 120, alignment: .leading)
