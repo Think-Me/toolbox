@@ -577,6 +577,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 return
             }
+            if CommandLine.arguments.contains("--app-update-install-probe") {
+                // 实测替换：强制走代理→检查→若有新版则下载挂载替换并重启（覆盖当前 .app 位置）
+                Task { @MainActor in
+                    model.settings.update.useProxy = true
+                    model.settings.update.proxyPort = 10809
+                    await model.softwareUpdate.check()
+                    if case .available(let info) = model.softwareUpdate.status {
+                        log("INSTALLPROBE 发现 \(info.version)，开始替换…\n")
+                        await model.softwareUpdate.install()
+                    } else {
+                        log("INSTALLPROBE 无新版 status=\(String(describing: model.softwareUpdate.status))\n")
+                        NSApp.terminate(nil)
+                    }
+                }
+                return
+            }
             if CommandLine.arguments.contains("--proxy-preview") {
                 self.showSettings(initialTab: 4)
                 return
@@ -635,7 +651,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                              "--perms", "--smoke-hotkey", "--settings-preview",
                              "--grant-screen", "--capture-probe", "--pin-demo",
                              "--hosts-e2e", "--menu-probe", "--paste-probe",
-                             "--overlay-preview", "--clip-preview", "--text-probe", "--proxy-preview", "--update-preview", "--proxy-run-probe", "--update-run-probe", "--rules-update-probe", "--app-update-probe"]
+                             "--overlay-preview", "--clip-preview", "--text-probe", "--proxy-preview", "--update-preview", "--app-update-install-probe", "--proxy-run-probe", "--update-run-probe", "--rules-update-probe", "--app-update-probe"]
     /// 实验：策略在 finishLaunching 之后再改可能完不成激活握手，
     /// 所以 --regular-mode 在 app.run() 之前就把策略定成 .regular。
     static var earlyRegular: Bool { CommandLine.arguments.contains("--regular-mode") }
