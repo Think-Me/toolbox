@@ -32,6 +32,10 @@ public final class AppModel: ObservableObject {
     /// AppModel 不认识 HotkeyCenter，用回调把方向保持成 UI → Core 单向。
     public var onHotkeysChanged: (@MainActor (AppSettings) -> Void)?
 
+    /// 软件自更新（读当前 settings.update 决定代理/镜像）
+    public lazy var softwareUpdate = SoftwareUpdateModel(
+        settings: { [weak self] in self?.settings.update ?? UpdateSettings() })
+
     private var recorder: HotkeyRecorderModel?
 
     public init(settings: AppSettings, store: SettingsStore,
@@ -250,6 +254,14 @@ public final class AppModel: ObservableObject {
     public func setAnnotationDefaultColorHex(_ hex: String) {
         // 一律吸附到调色板里的颜色再存：存进去的值必须能被工具条原样显示出来
         settings.annotationDefaultColorHex = AnnotationPalette.nearestColor(hex: hex).hexString
+        persist()
+    }
+
+    /// 修改软件更新设置并落盘
+    public func mutateUpdateSettings(_ mutate: (inout UpdateSettings) -> Void) {
+        var u = settings.update
+        mutate(&u)
+        settings.update = u
         persist()
     }
 

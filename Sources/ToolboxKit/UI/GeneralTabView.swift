@@ -14,6 +14,8 @@ struct GeneralTabView: View {
                 section("快捷键") { hotkeysSection }
                 Divider().padding(.horizontal, 20)
                 section("通用") { generalSection }
+                Divider().padding(.horizontal, 20)
+                section("软件更新") { updateSection }
             }
         }
         .frame(width: 560, height: 420)
@@ -146,6 +148,76 @@ struct GeneralTabView: View {
                 Text(model.store.file.lastPathComponent)
                     .font(.system(size: 11, design: .monospaced))
             }
+        }
+    }
+
+    // MARK: 软件更新
+
+    private var updateSection: some View {
+        let u = model.softwareUpdate
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Text("当前版本").frame(width: 120, alignment: .leading)
+                Text(u.currentVersion).font(.system(size: 12, design: .monospaced))
+                Spacer()
+                Button(u.isBusy ? "处理中…" : "检查更新") { Task { await u.check() } }
+                    .disabled(u.isBusy).controlSize(.small)
+            }
+            if let msg = u.message {
+                Text(msg).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if case .available(let info) = u.status {
+                HStack(spacing: 10) {
+                    Button("下载并安装 v\(info.version)") { Task { await u.install() } }
+                        .buttonStyle(.borderedProminent).disabled(u.isBusy)
+                    if let p = u.progress {
+                        ProgressView(value: min(max(p, 0), 1)).frame(width: 120)
+                        Text("\(Int(p * 100))%").font(.system(size: 10, design: .monospaced))
+                    }
+                }
+            }
+            Toggle("启动时及定期自动检查", isOn: Binding(
+                get: { model.settings.update.autoCheck },
+                set: { v in model.mutateUpdateSettings { $0.autoCheck = v } }))
+            if model.settings.update.autoCheck {
+                HStack(spacing: 6) {
+                    Text("检查间隔").font(.system(size: 11))
+                    Stepper(value: Binding(
+                        get: { model.settings.update.checkIntervalHours },
+                        set: { v in model.mutateUpdateSettings { $0.checkIntervalHours = max(1, v) } }),
+                        in: 1...168) {
+                        Text("\(model.settings.update.checkIntervalHours) 小时")
+                            .font(.system(size: 11, design: .monospaced))
+                    }
+                }
+            }
+            Divider()
+            Toggle("检查/下载走本地代理", isOn: Binding(
+                get: { model.settings.update.useProxy },
+                set: { v in model.mutateUpdateSettings { $0.useProxy = v } }))
+            if model.settings.update.useProxy {
+                HStack(spacing: 6) {
+                    Text("代理端口").font(.system(size: 11))
+                    Stepper(value: Binding(
+                        get: { model.settings.update.proxyPort },
+                        set: { v in model.mutateUpdateSettings { $0.proxyPort = v } }),
+                        in: 1...65535, step: 1) {
+                        Text("\(model.settings.update.proxyPort)")
+                            .font(.system(size: 11, design: .monospaced))
+                    }
+                }
+            }
+            HStack(spacing: 8) {
+                Text("加速镜像").font(.system(size: 11)).frame(width: 64, alignment: .leading)
+                TextField("如 https://ghproxy.net/（留空=不用）", text: Binding(
+                    get: { model.settings.update.githubMirror },
+                    set: { v in model.mutateUpdateSettings { $0.githubMirror = v } }))
+                    .textFieldStyle(.roundedBorder).font(.system(size: 11))
+            }
+            Text("加速镜像只作用于下载 release 资产；api.github.com 的版本探测走代理或直连。")
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

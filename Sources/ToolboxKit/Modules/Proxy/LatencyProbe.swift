@@ -25,9 +25,10 @@ public enum LatencyProbe {
 
     public static func httpProxyDict(port: Int) -> [AnyHashable: Any] {
         [
-            "HTTPEnable": 1,
-            "HTTPProxy": "127.0.0.1",
-            "HTTPPort": port,
+            "HTTPEnable": 1, "HTTPProxy": "127.0.0.1", "HTTPPort": port,
+            // https:// 资源（如 GitHub release）走的是 HTTPS 代理键，缺了它
+            // HTTPS 请求会绕过代理直连 → 国内超时。两类都要设。
+            "HTTPSEnable": 1, "HTTPSProxy": "127.0.0.1", "HTTPSPort": port,
         ]
     }
 

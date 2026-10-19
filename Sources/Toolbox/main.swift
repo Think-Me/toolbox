@@ -105,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let store: SettingsStore
     var recording = true
     var menuBar: MenuBarController?
+    var updateTimer: Timer?
     var actions: AppActions?
     var settingsWindow: SettingsWindowController?
     /// 贴图总管是单例，但方向/上下限这些参数要从入口注入
@@ -192,6 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let failed = registerHotkeys()
         if !failed.isEmpty && !Self.isProbeMode { reportFailures(failed) }
         startClipboard()
+        startUpdateChecks()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self, let bar = self.menuBar else { return }
@@ -552,6 +554,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 return
             }
+            if CommandLine.arguments.contains("--app-update-probe") {
+                // 实测：查更新 + 下载最新 dmg + 挂载验证（不做替换，避免覆盖 dev app）
+                Task { @MainActor in
+                    let cur = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+                    let fetcher = URLSessionFetcher(proxyPort: 10809)
+                    let st = UpdateSettings(useProxy: true, proxyPort: 10809)
+                    let status = await AppUpdater.check(currentVersion: cur, settings: st, fetcher: fetcher)
+                    log("UPDCHECK cur=\(cur) → \(status)\n")
+                    if let data = try? await fetcher.get(URL(string: AppUpdater.latestAPI)!),
+                       let info = AppUpdater.parseRelease(data) {
+                        log("UPDINFO tag=\(info.tag) dmg=\(info.dmgURL)\n")
+                        do {
+                            let (dmg, mount) = try await AppUpdater.downloadAndMount(info: info, settings: st, fetcher: fetcher)
+                            let sz = ((try? Data(contentsOf: dmg))?.count) ?? 0
+                            let hasApp = AppUpdater.appInMount(mount) != nil
+                            log("UPDDL dmg字节=\(sz) 挂载含Toolbox.app=\(hasApp)\n")
+                            _ = AppUpdater.detach(mount)
+                        } catch { log("UPDDDL 失败 \(error)\n") }
+                    }
+                    NSApp.terminate(nil)
+                }
+                return
+            }
             if CommandLine.arguments.contains("--proxy-preview") {
                 self.showSettings(initialTab: 4)
                 return
@@ -600,7 +625,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                              "--perms", "--smoke-hotkey", "--settings-preview",
                              "--grant-screen", "--capture-probe", "--pin-demo",
                              "--hosts-e2e", "--menu-probe", "--paste-probe",
-                             "--overlay-preview", "--clip-preview", "--text-probe", "--proxy-preview", "--proxy-run-probe", "--update-run-probe", "--rules-update-probe"]
+                             "--overlay-preview", "--clip-preview", "--text-probe", "--proxy-preview", "--proxy-run-probe", "--update-run-probe", "--rules-update-probe", "--app-update-probe"]
     /// 实验：策略在 finishLaunching 之后再改可能完不成激活握手，
     /// 所以 --regular-mode 在 app.run() 之前就把策略定成 .regular。
     static var earlyRegular: Bool { CommandLine.arguments.contains("--regular-mode") }
@@ -729,6 +754,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// App 退出前必须收干净代理：停内核 + 关系统代理。
     /// 漏了关系统代理的话，用户整个系统流量还指向已死的本地端口 → 全网打不开。
+    /// 软件更新：启动后延迟查一次，之后按间隔定时查。探针模式不查（别打扰、别触发网络）。
+    func startUpdateChecks() {
+        guard !Self.isProbeMode else { return }
+        let s = model.settings.update
+        guard s.autoCheck else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.runUpdateCheck() }
+        let interval = TimeInterval(max(1, s.checkIntervalHours) * 3600)
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            self?.runUpdateCheck()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        updateTimer = timer
+    }
+
+    func runUpdateCheck() {
+        Task { @MainActor in
+            await model.softwareUpdate.check()
+            if case .available(let info) = model.softwareUpdate.status {
+                DegradeNotice.shared.show("发现新版本 v\(info.version)，去「设置 → 通用」更新")
+            }
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         proxyModel.shutdown()
     }
