@@ -78,6 +78,13 @@ struct ProxyTabView: View {
                         Text(node.summary).font(.system(size: 10)).foregroundStyle(.secondary)
                     }
                     Spacer()
+                    if vm.library.runtime.autoSwitch {
+                        Toggle("", isOn: Binding(
+                            get: { node.balancerCandidate },
+                            set: { _ in vm.toggleCandidate(node.id) }))
+                            .toggleStyle(.checkbox).labelsHidden()
+                        Text("候选").font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
                     Button { vm.remove(node.id) } label: { Image(systemName: "trash") }
                         .buttonStyle(.borderless)
                 }
@@ -112,6 +119,24 @@ struct ProxyTabView: View {
             HStack(spacing: 16) {
                 stepper("SOCKS", value: vm.library.runtime.socksPort) { vm.setPorts(socks: $0, http: vm.library.runtime.httpPort) }
                 stepper("HTTP", value: vm.library.runtime.httpPort) { vm.setPorts(socks: vm.library.runtime.socksPort, http: $0) }
+            }
+            Divider()
+            Toggle("自动切换（当前节点不通时按延迟自动换候选）", isOn: Binding(
+                get: { vm.library.runtime.autoSwitch },
+                set: { vm.setAutoSwitch($0) }))
+            if vm.library.runtime.autoSwitch {
+                HStack(spacing: 8) {
+                    Text("探测间隔").font(.system(size: 11))
+                    Stepper(value: Binding(
+                        get: { vm.library.runtime.probeIntervalSeconds },
+                        set: { vm.setProbeInterval($0) }), in: 5...300, step: 5) {
+                        Text("\(vm.library.runtime.probeIntervalSeconds) 秒")
+                            .font(.system(size: 11, design: .monospaced))
+                    }
+                }
+                Text("探测只在代理运行时进行，空闲不耗资源；勾选右侧「候选」的节点参与自动切换。")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

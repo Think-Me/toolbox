@@ -4,13 +4,26 @@ import Foundation
 /// 字段名写错（尤其 `protocol`/`alterId` 这种大小写）编译器不会报，
 /// 但 xray 会静默连不上——类型化 + golden 测试是唯一能锁住它的办法。
 ///
-/// 关键约束（spec §1.1 #34）：geoip 规则必须写成 `"ip": ["geoip:cn"]`，
-/// geosite 写成 `"domain": ["geosite:cn"]`；独立的 `"geoip"` 字段本版本不认。
+/// 关键约束（实测，见 spec §1.1 #34/#37）：
+/// - geoip 规则写成 `"ip": ["geoip:cn"]`、geosite 写成 `"domain": ["geosite:cn"]`；
+///   独立的 `"geoip"` 字段本版本不认。
+/// - 自动切换用 `routing.balancers`（leastPing）+ `observatory`；`selector` 是**前缀匹配**。
+/// - `fallbackTag` 单独用会 "not all dependencies are resolved"，且 roundRobin 只轮询
+///   不 failover——所以走 leastPing + observatory（探测间隔可配）。
 public enum XrayConfigCompiler {
 
-    public static func compile(node: ProxyNode, runtime: ProxyRuntimeSettings) -> XrayConfig {
-        XrayConfig(
+    /// - Parameters:
+    ///   - node: 当前选中的节点（手动模式用）
+    ///   - candidates: 勾选进自动组的节点（自动模式用）
+    public static func compile(node: ProxyNode, runtime: ProxyRuntimeSettings,
+                               candidates: [ProxyNode] = []) -> XrayConfig {
+        let group = runtime.autoSwitch ? (candidates.isEmpty ? [node] : candidates) : [node]
+        let auto = runtime.autoSwitch && group.count >= 1
+        return XrayConfig(
             log: .init(loglevel: "warning"),
+            stats: auto ? .init() : nil,
+            observatory: auto ? .init(subjectSelector: ["proxy"],
+                                      probeInterval: "\(max(5, runtime.probeIntervalSeconds))s") : nil,
             inbounds: [
                 .init(port: runtime.socksPort, protocol: "socks", listen: "127.0.0.1",
                       tag: "socks-in",
@@ -18,29 +31,38 @@ public enum XrayConfigCompiler {
                 .init(port: runtime.httpPort, protocol: "http", listen: "127.0.0.1",
                       tag: "http-in", settings: nil),
             ],
-            outbounds: outbounds(node: node, mode: runtime.routingMode),
-            routing: routing(mode: runtime.routingMode))
+            outbounds: outbounds(group: group, auto: auto, mode: runtime.routingMode),
+            routing: routing(mode: runtime.routingMode, auto: auto))
     }
 
-    public static func compileData(node: ProxyNode, runtime: ProxyRuntimeSettings) -> Data {
+    public static func compileData(node: ProxyNode, runtime: ProxyRuntimeSettings,
+                                   candidates: [ProxyNode] = []) -> Data {
         let enc = JSONEncoder()
         enc.outputFormatting = [.sortedKeys, .prettyPrinted]
-        // 结构体全是内置类型，编码不会失败
-        return (try? enc.encode(compile(node: node, runtime: runtime))) ?? Data()
+        return (try? enc.encode(compile(node: node, runtime: runtime, candidates: candidates))) ?? Data()
     }
 
     // MARK: outbound
 
     /// xray 用 outbounds 数组的**第一个**作默认出口。
-    /// GFW 模式默认要 direct（只有命中 gfwlist 才 proxy），所以把 direct 排到最前；
-    /// 其余模式默认 proxy。
-    private static func outbounds(node: ProxyNode, mode: ProxyRoutingMode) -> [XrayConfig.Outbound] {
-        let proxy = proxyOutbound(node: node)
+    /// GFW 模式默认要 direct（只有命中 gfwlist 才代理），所以 direct 排最前；其余 proxy 在前。
+    private static func outbounds(group: [ProxyNode], auto: Bool,
+                                  mode: ProxyRoutingMode) -> [XrayConfig.Outbound] {
         let direct = XrayConfig.Outbound(tag: "direct", protocol: "freedom", settings: .empty, streamSettings: nil)
         let block = XrayConfig.Outbound(tag: "block", protocol: "blackhole", settings: .empty, streamSettings: nil)
+        // 自动模式：proxy1、proxy2…（balancer 的 selector ["proxy"] 前缀匹配它们）
+        // 手动模式：单个 "proxy"
+        let proxies: [XrayConfig.Outbound]
+        if auto {
+            proxies = group.enumerated().map { (i, n) in
+                var o = proxyOutbound(node: n); o.tag = "proxy\(i + 1)"; return o
+            }
+        } else {
+            proxies = [proxyOutbound(node: group.first ?? group[0])]
+        }
         switch mode {
-        case .gfwList: return [direct, proxy, block]
-        default:       return [proxy, direct, block]
+        case .gfwList: return [direct] + proxies + [block]
+        default:       return proxies + [direct, block]
         }
     }
 
@@ -86,13 +108,11 @@ public enum XrayConfigCompiler {
         var xhttp: XrayConfig.StreamSettings.XhttpSettings?
         switch node.transport {
         case .ws:
-            ws = .init(path: node.path.isEmpty ? "/" : node.path,
-                       host: node.host.isEmpty ? nil : node.host)
+            ws = .init(path: node.path.isEmpty ? "/" : node.path, host: node.host.isEmpty ? nil : node.host)
         case .grpc:
             grpc = .init(serviceName: node.path.isEmpty ? "grpc" : node.path)
         case .xhttp:
-            xhttp = .init(path: node.path.isEmpty ? "/" : node.path,
-                          host: node.host.isEmpty ? nil : node.host, mode: "auto")
+            xhttp = .init(path: node.path.isEmpty ? "/" : node.path, host: node.host.isEmpty ? nil : node.host, mode: "auto")
         default: break
         }
         return .init(network: node.transport.xrayNetwork, security: security,
@@ -102,24 +122,38 @@ public enum XrayConfigCompiler {
 
     // MARK: routing
 
-    private static func routing(mode: ProxyRoutingMode) -> XrayConfig.Routing {
+    /// 代理流量的目的地：自动模式指向 balancer "auto"，手动指向 outbound "proxy"。
+    private static func proxyRule(_ extra: (ip: [String]?, domain: [String]?),
+                                  auto: Bool) -> XrayConfig.Routing.Rule {
+        XrayConfig.Routing.Rule(type: "field", ip: extra.ip, domain: extra.domain, protocols: nil,
+                                network: nil,
+                                outboundTag: auto ? nil : "proxy", balancerTag: auto ? "auto" : nil)
+    }
+
+    private static func routing(mode: ProxyRoutingMode, auto: Bool) -> XrayConfig.Routing {
         var rules: [XrayConfig.Routing.Rule] = [
-            // 私网/回环永远直连（否则连局域网设备都走代理）
-            .init(type: "field", ip: ["geoip:private"], domain: nil, protocols: nil, outboundTag: "direct"),
-            // DNS 查询直连，避免解析被代理污染
-            .init(type: "field", ip: nil, domain: nil, protocols: ["dns"], outboundTag: "direct"),
+            .init(type: "field", ip: ["geoip:private"], domain: nil, protocols: nil, network: nil, outboundTag: "direct", balancerTag: nil),
+            .init(type: "field", ip: nil, domain: nil, protocols: ["dns"], network: nil, outboundTag: "direct", balancerTag: nil),
         ]
         switch mode {
         case .bypassMainland:
-            rules.append(.init(type: "field", ip: nil, domain: ["geosite:cn"], protocols: nil, outboundTag: "direct"))
-            rules.append(.init(type: "field", ip: ["geoip:cn"], domain: nil, protocols: nil, outboundTag: "direct"))
+            rules.append(.init(type: "field", ip: nil, domain: ["geosite:cn"], protocols: nil, network: nil, outboundTag: "direct", balancerTag: nil))
+            rules.append(.init(type: "field", ip: ["geoip:cn"], domain: nil, protocols: nil, network: nil, outboundTag: "direct", balancerTag: nil))
+            if auto {
+                // 其余流量走 balancer（leastPing 在候选里挑延迟最低/可用的）
+                rules.append(.init(type: "field", ip: nil, domain: nil, protocols: nil, network: "tcp,udp", outboundTag: nil, balancerTag: "auto"))
+            }
         case .gfwList:
-            // 只有命中 gfwlist 的域名走代理，其余落到默认出口 direct
-            rules.append(.init(type: "field", ip: nil, domain: ["geosite:gfw"], protocols: nil, outboundTag: "proxy"))
+            rules.append(proxyRule((nil, ["geosite:gfw"]), auto: auto))
         case .global:
-            break
+            if auto {
+                rules.append(.init(type: "field", ip: nil, domain: nil, protocols: nil, network: "tcp,udp", outboundTag: nil, balancerTag: "auto"))
+            }
         }
-        return .init(domainStrategy: "AsIs", rules: rules)
+        let balancers: [XrayConfig.Routing.Balancer]? = auto ? [
+            .init(tag: "auto", selector: ["proxy"], strategy: .init(type: "leastPing"))
+        ] : nil
+        return .init(domainStrategy: "AsIs", rules: rules, balancers: balancers)
     }
 }
 
@@ -127,11 +161,18 @@ public enum XrayConfigCompiler {
 
 public struct XrayConfig: Encodable {
     public let log: Log
+    public let stats: Stats?
+    public let observatory: Observatory?
     public let inbounds: [Inbound]
     public let outbounds: [Outbound]
     public let routing: Routing
 
     public struct Log: Encodable { public let loglevel: String }
+    public struct Stats: Encodable {}
+    public struct Observatory: Encodable {
+        public let subjectSelector: [String]
+        public let probeInterval: String
+    }
 
     public struct Inbound: Encodable {
         public let port: Int
@@ -147,7 +188,7 @@ public struct XrayConfig: Encodable {
     }
 
     public struct Outbound: Encodable {
-        public let tag: String
+        public var tag: String
         public let `protocol`: String
         public let settings: OutboundSettings
         public let streamSettings: StreamSettings?
@@ -160,7 +201,6 @@ public struct XrayConfig: Encodable {
         public var port: Int?
         public var method: String?
         public var password: String?
-        // 计算属性而非 static let：后者是全局可变状态，Swift 6 并发检查会拦
         public static var empty: OutboundSettings { OutboundSettings() }
         public struct VNext: Encodable {
             public let address: String
@@ -188,11 +228,6 @@ public struct XrayConfig: Encodable {
         public let wsSettings: WsSettings?
         public let grpcSettings: GrpcSettings?
         public let xhttpSettings: XhttpSettings?
-        public struct XhttpSettings: Encodable {
-            public let path: String
-            public let host: String?
-            public let mode: String?
-        }
         public struct TLSSettings: Encodable {
             public let serverName: String?
             public let fingerprint: String?
@@ -213,24 +248,36 @@ public struct XrayConfig: Encodable {
                 if let host { try c.encode(host, forKey: .host) }
             }
         }
-        public struct GrpcSettings: Encodable {
-            public let serviceName: String
+        public struct GrpcSettings: Encodable { public let serviceName: String }
+        public struct XhttpSettings: Encodable {
+            public let path: String
+            public let host: String?
+            public let mode: String?
         }
     }
 
     public struct Routing: Encodable {
         public let domainStrategy: String
         public let rules: [Rule]
+        public let balancers: [Balancer]?
         public struct Rule: Encodable {
             public let type: String
             public let ip: [String]?
             public let domain: [String]?
             public let protocols: [String]?
-            public let outboundTag: String
+            public let network: String?
+            public let outboundTag: String?
+            public let balancerTag: String?
             enum CodingKeys: String, CodingKey {
-                case type, ip, domain, outboundTag
+                case type, ip, domain, network, outboundTag, balancerTag
                 case protocols = "protocol"
             }
+        }
+        public struct Balancer: Encodable {
+            public let tag: String
+            public let selector: [String]
+            public let strategy: Strategy
+            public struct Strategy: Encodable { public let type: String }
         }
     }
 }

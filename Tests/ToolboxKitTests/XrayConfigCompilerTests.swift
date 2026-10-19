@@ -206,3 +206,87 @@ private func rules(_ root: [String: Any]) -> [[String: Any]] {
     if p.isRunning { p.terminate(); p.waitUntilExit() }
     #expect(died == false, "geosite:gfw 配置应能启动")
 }
+
+// MARK: 自动切换（balancer + observatory）
+
+private func autoRoot(candidates: [ProxyNode], interval: Int = 30,
+                      mode: ProxyRoutingMode = .global) -> [String: Any] {
+    let data = XrayConfigCompiler.compileData(
+        node: candidates.first!, runtime: .init(autoSwitch: true, probeIntervalSeconds: interval),
+        candidates: candidates)
+    return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+}
+private func vless(_ name: String, _ port: Int) -> ProxyNode {
+    ProxyNode(name: name, kind: .vless, server: "1.2.3.4", port: port, uuid: "u-\(name)")
+}
+
+@Test func autoModeEmitsBalancerObservatoryAndMultiOutbound() {
+    let cands = [vless("A", 443), vless("B", 8443), vless("C", 2053)]
+    let root = autoRoot(candidates: cands)
+    #expect(root["stats"] != nil)
+    let obs = (root["observatory"] as? [String: Any]) ?? [:]
+    #expect(obs["probeInterval"] as? String == "30s")
+    #expect((obs["subjectSelector"] as? [String])?.contains("proxy") == true)
+    let obTags = ((root["outbounds"] as? [[String: Any]]) ?? []).compactMap { $0["tag"] as? String }
+    #expect(obTags.contains("proxy1") && obTags.contains("proxy2") && obTags.contains("proxy3"))
+    #expect(!obTags.contains("proxy"))   // 自动模式没有单 "proxy"
+    let bal = (((root["routing"] as? [String: Any])?["balancers"] as? [[String: Any]])?.first) ?? [:]
+    #expect(bal["tag"] as? String == "auto")
+    #expect(((bal["selector"] as? [String])?.first) == "proxy")
+    #expect(((bal["strategy"] as? [String: Any])?["type"]) as? String == "leastPing")
+    let rules = (((root["routing"] as? [String: Any])?["rules"]) as? [[String: Any]]) ?? []
+    #expect(rules.contains { ($0["balancerTag"] as? String) == "auto" })
+}
+
+@Test func manualModeHasNoBalancerOrObservatory() {
+    let n = vless("A", 443)
+    let root = (try? JSONSerialization.jsonObject(with: XrayConfigCompiler.compileData(
+        node: n, runtime: .init(autoSwitch: false), candidates: [n]))) as? [String: Any] ?? [:]
+    #expect(root["observatory"] == nil)
+    #expect(root["stats"] == nil)
+    let obTags = ((root["outbounds"] as? [[String: Any]]) ?? []).compactMap { $0["tag"] as? String }
+    #expect(obTags.contains("proxy"))
+    let bal = ((root["routing"] as? [String: Any])?["balancers"])
+    #expect(bal == nil)
+}
+
+@Test func probeIntervalIsConfigurableAndFloored() {
+    let c = [vless("A", 1), vless("B", 2)]
+    let r1 = autoRoot(candidates: c, interval: 120)
+    #expect(((r1["observatory"] as? [String: Any])?["probeInterval"]) as? String == "120s")
+    let r2 = autoRoot(candidates: c, interval: 1)   // 低于下限 → 钳到 5
+    #expect(((r2["observatory"] as? [String: Any])?["probeInterval"]) as? String == "5s")
+}
+
+@Test func singleCandidateAutoModeStillValid() {
+    // 只勾一个候选也应能出合法配置（balancer over 1）
+    let root = autoRoot(candidates: [vless("A", 443)])
+    #expect(root["observatory"] != nil)
+    let obTags = ((root["outbounds"] as? [[String: Any]]) ?? []).compactMap { $0["tag"] as? String }
+    #expect(obTags.contains("proxy1"))
+}
+
+@Test func autoConfigBootsXray() throws {
+    let repoRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let vendor = repoRoot.appendingPathComponent("Vendor/xray")
+    let xray = vendor.appendingPathComponent("xray")
+    guard FileManager.default.isExecutableFile(atPath: xray.path) else { return }
+    let tmp = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("autocfg-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+    for f in ["geoip.dat", "geosite.dat"] {
+        try? FileManager.default.createSymbolicLink(at: tmp.appendingPathComponent(f), withDestinationURL: vendor.appendingPathComponent(f))
+    }
+    let cands = [vless("A", 443), vless("B", 8443)]
+    let cfg = tmp.appendingPathComponent("config.json")
+    try XrayConfigCompiler.compileData(node: cands[0],
+        runtime: .init(socksPort: 20990, httpPort: 20991, autoSwitch: true, probeIntervalSeconds: 10),
+        candidates: cands).write(to: cfg)
+    let p = Process(); p.executableURL = xray; p.arguments = ["run", "-c", cfg.path]
+    p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+    try p.run(); usleep(1_800_000)
+    let died = !p.isRunning
+    if p.isRunning { p.terminate(); p.waitUntilExit() }
+    #expect(died == false, "自动切换(leastPing+observatory)配置应能被 xray 加载启动")
+}

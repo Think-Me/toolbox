@@ -98,15 +98,50 @@ public final class ProxyViewModel: ObservableObject {
 
     public func startEngine() {
         guard engineAvailable else { message = "内核未就绪（构建时没跑 fetch-xray.sh）"; return }
-        guard let node = activeNode else { message = "先添加并选择一个节点"; return }
-        runner.start(config: XrayConfigCompiler.compileData(node: node, runtime: library.runtime))
+        guard let config = currentConfig() else { return }
+        runner.start(config: config)
+    }
+
+    /// 按当前模式生成配置：自动切换用勾选的候选组，手动用选中的单节点。
+    /// 返回 nil 表示前置条件不满足（已设置 message）。
+    private func currentConfig() -> Data? {
+        let candidates = library.nodes.filter(\.balancerCandidate)
+        if library.runtime.autoSwitch {
+            guard !candidates.isEmpty else {
+                message = "自动切换需至少勾选一个候选节点"; return nil
+            }
+            let node = activeNode ?? candidates[0]
+            return XrayConfigCompiler.compileData(node: node, runtime: library.runtime, candidates: candidates)
+        }
+        guard let node = activeNode else { message = "先添加并选择一个节点"; return nil }
+        return XrayConfigCompiler.compileData(node: node, runtime: library.runtime)
     }
 
     public func stopEngine() { runner.stop() }
 
     private func restart() {
-        guard let node = activeNode else { return }
-        runner.update(config: XrayConfigCompiler.compileData(node: node, runtime: library.runtime))
+        guard let config = currentConfig() else { return }
+        runner.update(config: config)
+    }
+
+    /// 切换某节点是否进候选组
+    public func toggleCandidate(_ id: UUID) {
+        guard let i = library.nodes.firstIndex(where: { $0.id == id }) else { return }
+        library.nodes[i].balancerCandidate.toggle()
+        persist()
+        if isEngineRunning && library.runtime.autoSwitch { restart() }
+    }
+
+    public func setAutoSwitch(_ on: Bool) {
+        library.runtime.autoSwitch = on
+        persist()
+        if isEngineRunning { restart() }
+    }
+
+    public func setProbeInterval(_ seconds: Int) {
+        library.runtime.probeIntervalSeconds = max(5, seconds)
+        persist()
+        if isEngineRunning && library.runtime.autoSwitch { restart() }
     }
 
     /// 经本地 SOCKS 打一次真实请求测延迟。需要内核在跑且有可用节点。

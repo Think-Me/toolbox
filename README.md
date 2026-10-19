@@ -62,29 +62,6 @@ Tests/ToolboxKitTests/  单元测试
 Scripts/                构建/签名/打包脚本
 ```
 
-## Finder 右键「新建文件」（可选安装）
-
-提供一个 macOS 缺失的能力：在 Finder 里右键 → **快速操作** → 新建
-`文本文件 .txt / Word 文档 .docx / Excel 表格 .xlsx / PPT 演示 .pptx`，
-文件名默认为时间戳 `yyyyMMddHHmmss.<ext>`（同秒冲突自动加序号），生成后在 Finder 中选中。
-
-安装 / 卸载：
-
-```bash
-./Scripts/newfile-service/install.sh     # 装 4 个快速操作（幂等，可重复运行）
-./Scripts/newfile-service/uninstall.sh   # 卸载
-```
-
-说明：
-- 这是**系统级 Quick Action**，独立于 Toolbox App 本体，装在 `~/Library/Services`；
-  不随 .app 分发，需要时在本机跑 `install.sh`。
-- 服务是「无输入」型，所以在文件夹空白处右键也会出现；语义是"当前最前 Finder
-  窗口的文件夹"（桌面上右键则建到桌面）。
-- 首次使用会请求"控制 Finder"的自动化权限，允许一次即可。
-- docx/xlsx/pptx 由脚本内联生成最小合法 OOXML（不依赖 python/Office）。
-- 受 macOS 限制，"快速操作"是服务菜单的一层，做不到"New ▸ 二级子菜单"，
-  故为四个并列项。
-
 ## 许可
 
 本项目暂不附开源许可证（保留所有权利）。内置的 Xray 内核为独立二进制，

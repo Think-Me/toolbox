@@ -47,6 +47,8 @@ public struct ProxyNode: Codable, Equatable, Identifiable, Sendable {
     public var isReality: Bool          // security=reality
     public var publicKey: String        // reality pbk
     public var shortID: String          // reality sid
+    /// 是否加入「自动切换」候选组（勾选框）。仅 autoSwitch 模式用到。
+    public var balancerCandidate: Bool
 
     public init(id: UUID = UUID(), name: String, kind: ProxyProtocolKind,
                 server: String, port: Int, uuid: String = "", password: String = "",
@@ -54,7 +56,7 @@ public struct ProxyNode: Codable, Equatable, Identifiable, Sendable {
                 encryption: String = "none", transport: ProxyTransport = .tcp,
                 host: String = "", path: String = "", useTLS: Bool = false,
                 sni: String = "", fingerprint: String = "", isReality: Bool = false,
-                publicKey: String = "", shortID: String = "") {
+                publicKey: String = "", shortID: String = "", balancerCandidate: Bool = true) {
         self.id = id; self.name = name; self.kind = kind; self.server = server
         self.port = port; self.uuid = uuid; self.password = password
         self.security = security; self.alterID = alterID; self.flow = flow
@@ -62,6 +64,7 @@ public struct ProxyNode: Codable, Equatable, Identifiable, Sendable {
         self.host = host; self.path = path; self.useTLS = useTLS
         self.sni = sni; self.fingerprint = fingerprint
         self.isReality = isReality; self.publicKey = publicKey; self.shortID = shortID
+        self.balancerCandidate = balancerCandidate
     }
 
     // 宽松解码：每个字段都 decodeIfPresent 给默认值。
@@ -69,7 +72,7 @@ public struct ProxyNode: Codable, Equatable, Identifiable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, name, kind, server, port, uuid, password, security, alterID, flow,
              encryption, transport, host, path, useTLS, sni, fingerprint,
-             isReality, publicKey, shortID
+             isReality, publicKey, shortID, balancerCandidate
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -96,6 +99,7 @@ public struct ProxyNode: Codable, Equatable, Identifiable, Sendable {
         isReality = d(Bool.self, .isReality, false)
         publicKey = d(String.self, .publicKey, "")
         shortID = d(String.self, .shortID, "")
+        balancerCandidate = d(Bool.self, .balancerCandidate, true)
     }
 
     /// 列表里显示的摘要
@@ -124,10 +128,18 @@ public struct ProxyRuntimeSettings: Codable, Equatable, Sendable {
     public var socksPort: Int
     public var httpPort: Int
     public var routingMode: ProxyRoutingMode
+    /// 关=手动（用选中的单个节点）；开=自动切换（候选里按延迟 leastPing 选，
+    /// 靠 observatory 探测——只在代理运行时才探，空闲不探）
+    public var autoSwitch: Bool
+    /// observatory 探测间隔（秒），可配
+    public var probeIntervalSeconds: Int
 
     public init(socksPort: Int = 10808, httpPort: Int = 10809,
-                routingMode: ProxyRoutingMode = .bypassMainland) {
+                routingMode: ProxyRoutingMode = .bypassMainland,
+                autoSwitch: Bool = false, probeIntervalSeconds: Int = 30) {
         self.socksPort = socksPort; self.httpPort = httpPort; self.routingMode = routingMode
+        self.autoSwitch = autoSwitch
+        self.probeIntervalSeconds = probeIntervalSeconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -135,6 +147,8 @@ public struct ProxyRuntimeSettings: Codable, Equatable, Sendable {
         socksPort = (try? c.decodeIfPresent(Int.self, forKey: .socksPort)) ?? nil ?? 10808
         httpPort = (try? c.decodeIfPresent(Int.self, forKey: .httpPort)) ?? nil ?? 10809
         routingMode = (try? c.decodeIfPresent(ProxyRoutingMode.self, forKey: .routingMode)) ?? nil ?? .bypassMainland
+        autoSwitch = (try? c.decodeIfPresent(Bool.self, forKey: .autoSwitch)) ?? nil ?? false
+        probeIntervalSeconds = (try? c.decodeIfPresent(Int.self, forKey: .probeIntervalSeconds)) ?? nil ?? 30
     }
-    private enum CodingKeys: String, CodingKey { case socksPort, httpPort, routingMode }
+    private enum CodingKeys: String, CodingKey { case socksPort, httpPort, routingMode, autoSwitch, probeIntervalSeconds }
 }
