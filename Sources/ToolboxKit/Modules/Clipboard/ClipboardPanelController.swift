@@ -223,8 +223,6 @@ public final class ClipboardPanelController: NSResponder {
             return "已复制，未自动粘贴：需要辅助功能权限（设置 → 权限与授权）"
         case .targetAppUnknown:
             return "已复制，未自动粘贴：找不到原来的 App，请手动 ⌘V"
-        case .secureInputActive:
-            return "已复制，未自动粘贴：当前输入框开启了安全输入（密码框/终端 sudo）"
         case .timedOut:
             return "已复制，未自动粘贴：切换前台超时，请手动 ⌘V"
         }

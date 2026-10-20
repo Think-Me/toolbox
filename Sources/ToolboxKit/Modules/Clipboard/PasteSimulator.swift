@@ -18,7 +18,6 @@ public enum PasteOutcome: Equatable {
     public enum Degrade: Equatable {
         case accessibilityNotGranted
         case targetAppUnknown
-        case secureInputActive
         case timedOut
     }
 }
@@ -29,20 +28,17 @@ public final class PasteSimulator {
     private let driver: any PasteDriving
     private let pasteboard: NSPasteboard
     private let accessibilityTrusted: () -> Bool
-    private let secureInputEnabled: () -> Bool
     /// 图片条目要读 MediaStore 里的实体。用闭包注入，避免 Core 层反向依赖模块实现。
     private let imageLoader: (String) -> Data?
     private let tracker: SelfWriteTracker?
 
     public init(driver: any PasteDriving, pasteboard: NSPasteboard = .general,
                 accessibilityTrusted: @escaping () -> Bool = { AXIsProcessTrusted() },
-                secureInputEnabled: @escaping () -> Bool = { IsSecureEventInputEnabled() },
                 imageLoader: @escaping (String) -> Data? = { _ in nil },
                 tracker: SelfWriteTracker? = nil) {
         self.driver = driver
         self.pasteboard = pasteboard
         self.accessibilityTrusted = accessibilityTrusted
-        self.secureInputEnabled = secureInputEnabled
         self.imageLoader = imageLoader
         self.tracker = tracker
     }
@@ -56,7 +52,7 @@ public final class PasteSimulator {
     /// 步骤顺序是契约的一部分，改动必须同步改测试：
     /// 1. 先校验内容（空内容不许清掉用户原有剪贴板）
     /// 2. 写剪贴板 + 自写标记（**必须在切前台之前**，反了会把旧内容粘出去）
-    /// 3. 权限 / 目标 / Secure Input 三道闸门，任一不过就停在"只复制"
+    /// 3. 权限 / 目标 两道闸门，任一不过就停在"只复制"
     /// 4. prepare（关掉自己的面板）→ 切前台 → 等到位 → 发 ⌘V
     public func paste(_ item: ClipboardItem, into app: NSRunningApplication?,
                       prepare: (@MainActor () -> Void)? = nil) async -> PasteOutcome {
@@ -81,9 +77,10 @@ public final class PasteSimulator {
         }
         if !accessibilityTrusted() { return .copiedOnly(.accessibilityNotGranted) }
         guard let app else { return .copiedOnly(.targetAppUnknown) }
-        // 终端 sudo、密码框、部分 DRM 会开 Secure Input，此时合成键被系统丢弃
-        if secureInputEnabled() { return .copiedOnly(.secureInputActive) }
 
+        // 不再因"全局安全输入开启"而跳过自动粘贴：那个判断是全系统粒度，
+        // 常被无关 App（终端、密码管理器）误置，导致普通密码框也粘不上。
+        // 现在一律尝试合成 ⌘V；真被 Secure Input 丢弃时内容已在剪贴板，可手动 ⌘V。
         prepare?()
         guard await driver.activate(app) else { return .copiedOnly(.timedOut) }
         guard await driver.sendPasteKeystroke() else { return .failed(.keystrokePostFailed) }

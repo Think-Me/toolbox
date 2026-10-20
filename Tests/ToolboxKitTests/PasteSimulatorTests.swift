@@ -26,7 +26,7 @@ private final class FakeDriver: PasteDriving {
 }
 
 @MainActor
-private func makeSimulator(trusted: Bool = true, secureInput: Bool = false,
+private func makeSimulator(trusted: Bool = true,
                            images: [String: Data] = [:])
     -> (PasteSimulator, FakeDriver, NSPasteboard) {
     let driver = FakeDriver()
@@ -34,7 +34,6 @@ private func makeSimulator(trusted: Bool = true, secureInput: Bool = false,
     let pb = NSPasteboard(name: .init("toolbox.paste-test.\(UUID().uuidString)"))
     let sim = PasteSimulator(driver: driver, pasteboard: pb,
                              accessibilityTrusted: { trusted },
-                             secureInputEnabled: { secureInput },
                              imageLoader: { images[$0] })
     return (sim, driver, pb)
 }
@@ -75,13 +74,6 @@ private func textItem(_ s: String) -> ClipboardItem {
     let outcome = await sim.paste(item, into: NSRunningApplication.current)
     #expect(outcome == .copiedOnly(.timedOut))
     #expect(driver.calls == ["activate"])            // 前台没到位就不该发键
-}
-
-@MainActor @Test func secureInputDegrades() async {
-    let (sim, driver, _) = makeSimulator(secureInput: true)
-    #expect(await sim.paste(textItem("z"), into: NSRunningApplication.current)
-            == .copiedOnly(.secureInputActive))
-    #expect(driver.calls.isEmpty)
 }
 
 @MainActor @Test func ownWriteMarkerCarriesItemID() async {
@@ -147,7 +139,6 @@ private func textItem(_ s: String) -> ClipboardItem {
     let pb = NSPasteboard(name: .init("toolbox.grace.\(UUID().uuidString)"))
     let sim = PasteSimulator(driver: driver, pasteboard: pb,
                              accessibilityTrusted: { false },
-                             secureInputEnabled: { false },
                              imageLoader: { _ in nil }, tracker: tracker)
     #expect(!tracker.isWithinGrace(now: Date()))
     _ = await sim.paste(textItem("x"), into: nil)
@@ -168,8 +159,7 @@ private func textItem(_ s: String) -> ClipboardItem {
     driver.panelOpenProbe = { panelOpen }
     let pb = NSPasteboard(name: .init("toolbox.order.\(UUID().uuidString)"))
     let sim = PasteSimulator(driver: driver, pasteboard: pb,
-                             accessibilityTrusted: { true },
-                             secureInputEnabled: { false }, imageLoader: { _ in nil })
+                             accessibilityTrusted: { true }, imageLoader: { _ in nil })
     let outcome = await sim.paste(textItem("x"), into: .current) { panelOpen = false }
     #expect(outcome == .pasted)
     #expect(driver.panelStillOpenAtActivate == false)   // 切前台前面板必须已经关掉
