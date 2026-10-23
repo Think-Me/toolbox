@@ -265,6 +265,14 @@ public final class AppModel: ObservableObject {
         persist()
     }
 
+    /// 修改划词翻译设置并落盘
+    public func mutateTranslationSettings(_ mutate: (inout TranslationSettings) -> Void) {
+        var t = settings.translation
+        mutate(&t)
+        settings.translation = t
+        persist()
+    }
+
     public func setAnnotationDefaultLineWidth(_ w: Double) {
         settings.annotationDefaultLineWidth = Double(AnnotationPalette.nearestLineWidth(w))
         persist()

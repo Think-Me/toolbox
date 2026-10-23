@@ -76,6 +76,19 @@ public final class PanelPresenter {
 
     static let escapeKeyCode: UInt16 = 53
 
+    /// 内容变多/变少时按需改尺寸（翻译浮窗用）。
+    /// 固定顶边而不是中心：面板从光标下方展开，高度变化时上沿不动看起来才不跳。
+    public func resize(width: CGFloat, height: CGFloat) {
+        guard let panel else { return }
+        let old = panel.frame
+        let screen = ScreenResolver.screen(containing: NSPoint(x: old.midX, y: old.midY))
+        var frame = NSRect(x: old.minX, y: old.maxY - height, width: width, height: height)
+        let visible = screen.visibleFrame
+        frame.origin.y = max(visible.minY, min(frame.origin.y, visible.maxY - height))
+        frame.origin.x = max(visible.minX, min(frame.origin.x, visible.maxX - width))
+        panel.setFrame(frame, display: true)
+    }
+
     /// 四种出口（点窗外 / Esc / 选中 / ⌘W）必须都走这里，
     /// 否则漏一次 orderOut 就会留下看不见但吃事件的浮层。
     public func dismissCurrent(reason: DismissReason) {

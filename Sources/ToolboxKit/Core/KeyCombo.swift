@@ -22,7 +22,7 @@ public struct KeyCombo: Codable, Hashable, Sendable {
 
     // 常用虚拟键码
     public static let ansiA: UInt16 = 0, ansiS: UInt16 = 1, ansiD: UInt16 = 2, ansiF: UInt16 = 3
-    public static let ansiH: UInt16 = 4, ansiV: UInt16 = 9
+    public static let ansiH: UInt16 = 4, ansiT: UInt16 = 17, ansiV: UInt16 = 9
     public static let comma: UInt16 = 43
     public static let space: UInt16 = 49, deleteLeft: UInt16 = 51, returnKey: UInt16 = 36
     public static let f1: UInt16 = 122, f2: UInt16 = 120, f3: UInt16 = 99

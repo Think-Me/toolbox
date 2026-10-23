@@ -5,7 +5,8 @@
 - **剪贴板历史** —— 全局热键呼出，选中即用、自动粘贴、置顶、图片/文件记录
 - **Hosts 规则切换** —— 类似 SwitchHosts，一键启停规则、可选自动刷新 DNS
 - **截图 + 贴图 + 标注** —— 类似 Snipaste，选区吸附、放大镜取色、矩形/箭头/画笔/马赛克/文字标注
-- **本地代理** —— 内置 Xray 内核，把节点转成本地 SOCKS/HTTP 代理，一键系统代理（不做 TUN）
+- **本地代理** —— 内置 Xray 内核，把节点转成本地 SOCKS/HTTP 代理，一键系统代理（不做 TUN）；启动时已有节点则自动启动内核
+- **划词翻译** —— 选中文本按热键即译，自动识别源语言；Apple 本地 / 有道 / MyMemory / AI 多引擎，可复制、朗读、替换原文
 
 纯菜单栏（`LSUIElement`）App，不占 Dock；Swift + AppKit（设置页用 SwiftUI）。
 
@@ -52,11 +53,12 @@ make dmg     # 打包 Build/Toolbox.dmg（可分发）
 | 区域截图 | `⌃⌘A` |
 | 全屏截图并贴图 | `F2` |
 | 收回所有贴图 | `F3` |
+| 划词翻译 | `⌥⌘T` |
 
 ## 目录结构
 
 ```
-Sources/ToolboxKit/     核心库（剪贴板 / hosts / 截图 / 代理 / 基础设施）
+Sources/ToolboxKit/     核心库（剪贴板 / hosts / 截图 / 代理 / 翻译 / 基础设施）
 Sources/Toolbox/        可执行入口（AppDelegate、菜单、热键注册、调试探针）
 Tests/ToolboxKitTests/  单元测试
 Scripts/                构建/签名/打包脚本

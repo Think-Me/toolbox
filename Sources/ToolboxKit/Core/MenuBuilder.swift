@@ -50,6 +50,7 @@ public struct AppActions {
     public var captureRegion: @MainActor () -> Void
     public var captureFull: @MainActor () -> Void
     public var killAllPins: @MainActor () -> Void
+    public var translateSelection: @MainActor () -> Void
     public var togglePause: @MainActor () -> Void
     public var openPermissions: @MainActor () -> Void
     public var openSettings: @MainActor () -> Void
@@ -63,6 +64,7 @@ public struct AppActions {
                 captureRegion: @escaping @MainActor () -> Void,
                 captureFull: @escaping @MainActor () -> Void,
                 killAllPins: @escaping @MainActor () -> Void,
+                translateSelection: @escaping @MainActor () -> Void,
                 togglePause: @escaping @MainActor () -> Void,
                 openPermissions: @escaping @MainActor () -> Void,
                 openSettings: @escaping @MainActor () -> Void,
@@ -75,6 +77,7 @@ public struct AppActions {
         self.captureRegion = captureRegion
         self.captureFull = captureFull
         self.killAllPins = killAllPins
+        self.translateSelection = translateSelection
         self.togglePause = togglePause
         self.openPermissions = openPermissions
         self.openSettings = openSettings
@@ -92,6 +95,7 @@ public struct AppActions {
         case .captureRegion: captureRegion()
         case .captureFull:   captureFull()
         case .killAllPins:   killAllPins()
+        case .translateSelection: translateSelection()
         }
     }
 }
@@ -131,6 +135,7 @@ public enum MenuBuilder {
                          children: hostsSubmenu(hosts)),
             hotkeyItem("区域截图", .captureRegion, settings),
             hotkeyItem("全屏截图", .captureFull, settings),
+            hotkeyItem("翻译选中文本", .translateSelection, settings),
             hotkeyItem("关闭所有贴图", .killAllPins, settings),
             .separator,
             MenuItemSpec(title: "暂停剪贴板记录", checked: !recording, action: .togglePause),

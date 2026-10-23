@@ -45,6 +45,23 @@ public final class ProxyViewModel: ObservableObject {
     }
     public var activeNode: ProxyNode? { library.activeNode }
 
+    /// 手动模式看选中节点；自动切换模式看候选组——候选组为空时内核起不来。
+    public nonisolated static func hasUsableNode(_ library: ProxyLibrary) -> Bool {
+        if library.runtime.autoSwitch {
+            return library.nodes.contains(where: \.balancerCandidate)
+        }
+        return library.activeNode != nil
+    }
+
+    /// 启动 App 时调用：已有可用节点就自动拉起内核。
+    /// 不碰系统代理（是否接管由用户在设置里手动开）。
+    /// 探针模式不调用（避免自动化测试起多余进程）。
+    public func autoStartIfPossible() {
+        guard !isEngineRunning, engineAvailable,
+              Self.hasUsableNode(library) else { return }
+        startEngine()
+    }
+
     // MARK: 节点增删改
 
     /// 粘贴一条分享链接添加。返回错误提示（nil = 成功）。

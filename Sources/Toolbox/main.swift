@@ -129,6 +129,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settings: { [weak self] in self?.model.settings ?? .default })
     lazy var captureFlow = CaptureFlow(settings: { [weak self] in self?.model.settings ?? .default })
 
+    // MARK: 划词翻译
+    lazy var translateReader = SelectionReader(tracker: selfWrites)
+    lazy var translationPanel = TranslationPanelController(
+        settings: { [weak self] in self?.model.settings.translation ?? TranslationSettings() },
+        reader: translateReader)
+
     // MARK: Hosts 模块
     lazy var hostsStore = HostsStore(file: paths.hostsRules)
     lazy var hostsApplying = HostsApplying(
@@ -194,6 +200,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !failed.isEmpty && !Self.isProbeMode { reportFailures(failed) }
         startClipboard()
         startUpdateChecks()
+        if !Self.isProbeMode { proxyModel.autoStartIfPossible() }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self, let bar = self.menuBar else { return }
@@ -593,6 +600,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 return
             }
+            if CommandLine.arguments.contains("--translate-probe") {
+                Task { @MainActor in
+                    for engine in [TranslationEngine.youdao, .mymemory] {
+                        var st = TranslationSettings()
+                        st.engine = engine
+                        let m = TranslationModel(settings: { st }, aiKey: { nil })
+                        m.begin(text: "The quick brown fox jumps over the lazy dog.")
+                        let deadline = Date().addingTimeInterval(8)
+                        while m.isWorking, Date() < deadline {
+                            try? await Task.sleep(nanoseconds: 100_000_000)
+                        }
+                        log("TRANSLATE \(engine.rawValue) engine=\(m.engineLabel) "
+                            + "out=\(m.output ?? "nil") detected=\(m.detectedLabel) "
+                            + "err=\(m.errorMessage ?? "nil")\n")
+                    }
+                    NSApp.terminate(nil)
+                }
+                return
+            }
+            if CommandLine.arguments.contains("--translate-panel-preview") {
+                let i = CommandLine.arguments.firstIndex(of: "--translate-panel-preview") ?? 0
+                let text = CommandLine.arguments.count > i + 1
+                    ? CommandLine.arguments[i + 1]
+                    : "The quick brown fox jumps over the lazy dog."
+                translationPanel.present(text: text)
+                return
+            }
+            if CommandLine.arguments.contains("--translate-preview") {
+                self.showSettings(initialTab: 5)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    self.settingsWindow?.window?.setContentSize(NSSize(width: 560, height: 900))
+                    self.settingsWindow?.window?.center()
+                    self.settingsWindow?.window?.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                return
+            }
             if CommandLine.arguments.contains("--proxy-preview") {
                 self.showSettings(initialTab: 4)
                 return
@@ -651,7 +695,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                              "--perms", "--smoke-hotkey", "--settings-preview",
                              "--grant-screen", "--capture-probe", "--pin-demo",
                              "--hosts-e2e", "--menu-probe", "--paste-probe",
-                             "--overlay-preview", "--clip-preview", "--text-probe", "--proxy-preview", "--update-preview", "--app-update-install-probe", "--proxy-run-probe", "--update-run-probe", "--rules-update-probe", "--app-update-probe"]
+                             "--overlay-preview", "--clip-preview", "--text-probe", "--proxy-preview", "--update-preview", "--app-update-install-probe", "--proxy-run-probe", "--update-run-probe", "--rules-update-probe", "--app-update-probe",
+                             "--translate-probe", "--translate-preview", "--translate-panel-preview"]
     /// 实验：策略在 finishLaunching 之后再改可能完不成激活握手，
     /// 所以 --regular-mode 在 app.run() 之前就把策略定成 .regular。
     static var earlyRegular: Bool { CommandLine.arguments.contains("--regular-mode") }
@@ -756,6 +801,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             captureRegion: { [weak self] in self?.captureFlow.startRegionCapture() },
             captureFull: { [weak self] in self?.captureFlow.captureFullScreenAndPin() },
             killAllPins: { PinManager.shared.closeAll() },
+            translateSelection: { [weak self] in self?.translationPanel.present() },
             togglePause: { [weak self] in self?.toggleRecording() },
             openPermissions: { [weak self] in self?.showSettings() },
             openSettings: { [weak self] in self?.showSettings() },

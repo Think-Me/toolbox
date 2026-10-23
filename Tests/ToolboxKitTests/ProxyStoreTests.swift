@@ -74,3 +74,21 @@ private func tmpFile() -> URL {
     lib = ProxyStore.replacing(edited, in: lib)
     #expect(lib.nodes[0].name == "A2")
 }
+
+@Test func autoStartNeedsUsableNode() {
+    var lib = ProxyLibrary()
+    #expect(!ProxyViewModel.hasUsableNode(lib))        // 空库不自动开
+
+    let node = ProxyNode(name: "A", kind: .vmess, server: "a", port: 1, uuid: "u")
+    lib = ProxyStore.adding(node, to: lib)
+    #expect(ProxyViewModel.hasUsableNode(lib))         // 手动模式：有选中节点
+
+    lib = ProxyStore.settingActive(nil, in: lib)
+    #expect(!ProxyViewModel.hasUsableNode(lib))        // 手动模式：没选中
+
+    lib.runtime.autoSwitch = true
+    #expect(ProxyViewModel.hasUsableNode(lib))         // 自动切换：候选组非空
+
+    lib.nodes[0].balancerCandidate = false
+    #expect(!ProxyViewModel.hasUsableNode(lib))        // 自动切换：没有候选
+}

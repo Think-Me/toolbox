@@ -21,7 +21,7 @@ private func handleHotKey(_ next: EventHandlerCallRef?, _ event: EventRef?,
 }
 
 public enum HotkeyID: String, Codable, CaseIterable, Sendable {
-    case clipboard, hostsQuick, captureRegion, captureFull, killAllPins
+    case clipboard, hostsQuick, captureRegion, captureFull, killAllPins, translateSelection
 
     /// 设置页与冲突提示里的中文名。放在 HotkeyID 上而不是各视图自己的表，
     /// 是为了让冲突提示和列表文案同源，加键位时不会漏改一处
@@ -32,6 +32,7 @@ public enum HotkeyID: String, Codable, CaseIterable, Sendable {
         case .captureRegion: return "区域截图"
         case .captureFull:   return "全屏截图"
         case .killAllPins:   return "关闭所有贴图"
+        case .translateSelection: return "划词翻译"
         }
     }
 }

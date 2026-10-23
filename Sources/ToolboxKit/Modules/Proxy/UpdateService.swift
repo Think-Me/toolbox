@@ -7,6 +7,18 @@ public protocol HTTPFetching: Sendable {
     func download(_ url: URL, to file: URL, progress: @escaping @Sendable (Double) -> Void) async throws
 }
 
+/// POST 的抽象。翻译/AI 需要表单或 JSON body，`HTTPFetching` 只有 get。
+public protocol HTTPPosting: Sendable {
+    func post(_ url: URL, contentType: String, body: Data,
+              headers: [String: String]) async throws -> Data
+}
+
+/// 非 2xx 响应。带上状态码，调用方才好区分"反爬 403"和"网络不通"。
+public struct HTTPStatusFailure: Error, Equatable, Sendable {
+    public let code: Int
+    public init(code: Int) { self.code = code }
+}
+
 public struct URLSessionFetcher: HTTPFetching {
     /// 走本地 HTTP 代理取 GitHub（国内直连常被墙/超时）。nil = 直连。
     public let proxyPort: Int?
@@ -46,6 +58,24 @@ public struct URLSessionFetcher: HTTPFetching {
             delegate.session = session
             session.downloadTask(with: url).resume()
         }
+    }
+}
+
+extension URLSessionFetcher: HTTPPosting {
+    public func post(_ url: URL, contentType: String, body: Data,
+                     headers: [String: String]) async throws -> Data {
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
+        req.httpBody = body
+        req.timeoutInterval = 30
+        let (data, response) = try await makeSession().data(for: req)
+        if let http = response as? HTTPURLResponse,
+           !(200...299).contains(http.statusCode) {
+            throw HTTPStatusFailure(code: http.statusCode)
+        }
+        return data
     }
 }
 
