@@ -67,6 +67,12 @@ internal static class NativeMethods
     public const uint CfHDrop = 15;
     public const uint GmMemMoveable = 0x0002;
 
+    // SendInput
+    public const uint InputKeyboard = 1;
+    public const uint KeyeventfKeyUp = 0x0002;
+    public const ushort VkControl = 0x11;
+    public const ushort VkV = 0x56;
+
     /// <summary>v4 语义下的通知码（lParam 低字）。</summary>
     public const int NinSelect = 0x0400;
     public const int NinKeySelect = 0x0401;
@@ -206,4 +212,32 @@ internal static class NativeMethods
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
+    // ---- 合成按键 ----
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Input
+    {
+        public uint Type;
+        public InputUnion Data;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    public struct InputUnion
+    {
+        [FieldOffset(0)] public KeyboardInput Keyboard;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KeyboardInput
+    {
+        public ushort VirtualKey;
+        public ushort ScanCode;
+        public uint Flags;
+        public uint Time;
+        public IntPtr ExtraInfo;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint SendInput(uint count, Input[] inputs, int size);
 }

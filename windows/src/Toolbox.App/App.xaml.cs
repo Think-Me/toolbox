@@ -31,7 +31,11 @@ public partial class App : Application
     private SettingsWindow? _settingsWindow;
     private ClipboardStore? _clipboardStore;
     private ClipboardMonitor? _monitor;
+    private ClipboardPanelWindow? _clipboardPanel;
     private DispatcherTimer? _clipboardCoalesce;
+
+    /// <summary>呼出面板之前的前台窗口，粘贴要打回这里。</summary>
+    private IntPtr _pasteTarget;
 
     private bool _probeMode;
     private bool _reportingCrash;
@@ -142,13 +146,43 @@ public partial class App : Application
         var hotkeyId = (HotkeyId)id;
         var action = AppActionTable.ForHotkey(hotkeyId);
         _log?.Info($"热键 {HotkeyRegistrationTable.DisplayName(hotkeyId)} → {action}");
+
+        // 热键不改变前台窗口，此刻的前台就是用户想粘贴回去的地方
+        if (action == TrayAction.Clipboard) _pasteTarget = NativeMethods.GetForegroundWindow();
+
         _actions?.Invoke(action);
         return true;
+    }
+
+    private void ShowClipboardPanel()
+    {
+        if (_clipboardStore is null || _monitor is null) return;
+
+        _clipboardPanel ??= new ClipboardPanelWindow(_clipboardStore, PasteClipboardItem, ReportStatus);
+        _clipboardPanel.ShowPanel();
+    }
+
+    private (PasteOutcome Outcome, string Message) PasteClipboardItem(ClipboardItem item)
+    {
+        if (_clipboardStore is null || _monitor is null) return (PasteOutcome.Failed, "");
+
+        var result = ClipboardPaste.Paste(_clipboardStore, item, _monitor, _pasteTarget);
+        _log?.Info($"粘贴 {item.Kind}：{result.Outcome} {result.Message}");
+        return result;
+    }
+
+    private void ReportStatus(string message)
+    {
+        _log?.Info(message);
+        _tray?.ShowBalloon("Toolbox", message);
     }
 
     private void ShowTrayMenu()
     {
         if (_menu is null || _actions is null) return;
+
+        // 菜单一打开前台就变成我们自己的窗口，所以要在打开之前记住用户当时在哪个窗口。
+        _pasteTarget = NativeMethods.GetForegroundWindow();
 
         // 每次打开都重新取快照：勾选状态必须是"此刻的真实状态"，不能是启动时的。
         var items = TrayMenuBuilder.Items(_settings, _recording, LoginItem.IsEnabled(), TrayHostsSnapshot.Empty);
@@ -166,11 +200,11 @@ public partial class App : Application
         table.Bind(TrayAction.Quit, _ => Shutdown(0));
         table.Bind(TrayAction.TogglePause, _ => ToggleRecording());
         table.Bind(TrayAction.ToggleLoginItem, _ => ToggleLoginItem());
+        table.Bind(TrayAction.Clipboard, _ => ShowClipboardPanel());
 
         // 还没做的模块：菜单照常可点，点了明确告诉用户什么时候会有，而不是静默无反应。
         TrayAction[] pending =
         [
-            TrayAction.Clipboard,
             TrayAction.Translate,
             TrayAction.HostsPanel,
             TrayAction.HostsManagementToggle,
@@ -312,6 +346,17 @@ public partial class App : Application
         catch (Exception error)
         {
             _probe.Fail("设置窗加载失败：" + error.Message);
+        }
+
+        try
+        {
+            var probePanel = new ClipboardPanelWindow(_clipboardStore!, PasteClipboardItem, _ => { });
+            probePanel.Close();
+            _probe.Line("clipboardpanel.loaded=true");
+        }
+        catch (Exception error)
+        {
+            _probe.Fail("剪贴板面板加载失败：" + error.Message);
         }
 
         _probe.Write(_paths.ProbeReport);
