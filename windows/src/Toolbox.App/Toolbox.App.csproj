@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>Toolbox.App</RootNamespace>
+    <AssemblyName>Toolbox.App</AssemblyName>
+    <!-- NOTIFYICONDATAW 的大小随位数变（976 / 956），只锁一种布局 -->
+    <PlatformTarget>x64</PlatformTarget>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\Toolbox.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Toolbox.Core\Toolbox.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 托盘图标用 LoadImage 从文件加载（WPF 里没有 System.Drawing），所以必须复制到输出目录 -->
+    <Content Include="Assets\Toolbox.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -5,7 +5,8 @@ Build/
 *.xcuserstate
 xcuserdata/
 derivedData/
-*.app/
+# 不要写裸的 *.app/：Windows 上文件名不区分大小写，它会把 windows/src/Toolbox.App 整个吞掉。
+# macOS 的 .app 包只会出现在 Build/ 下（build-app.sh / make-dmg.sh），上面已经忽略。
 
 # 可由 Scripts/gen-icon-assets.py 重新生成
 Resources/AppIcon.iconset/

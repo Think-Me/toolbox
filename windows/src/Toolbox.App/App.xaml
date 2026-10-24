@@ -1,0 +1,7 @@
+<Application x:Class="Toolbox.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             ShutdownMode="OnExplicitShutdown">
+    <!-- OnExplicitShutdown：没有主窗口，关掉设置窗不能把常驻的托盘进程一起带走 -->
+    <Application.Resources />
+</Application>
