@@ -60,6 +60,13 @@ internal static class NativeMethods
     public const uint TpmRightButton = 0x0002;
     public const uint TpmReturnCmd = 0x0100;
 
+    // 剪贴板
+    public const int WmClipboardUpdate = 0x031D;
+    public const uint CfText = 13;
+    public const uint CfDib = 8;
+    public const uint CfHDrop = 15;
+    public const uint GmMemMoveable = 0x0002;
+
     /// <summary>v4 语义下的通知码（lParam 低字）。</summary>
     public const int NinSelect = 0x0400;
     public const int NinKeySelect = 0x0401;
@@ -150,4 +157,53 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool PostMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+
+    // ---- 剪贴板 ----
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool AddClipboardFormatListener(IntPtr window);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool RemoveClipboardFormatListener(IntPtr window);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool OpenClipboard(IntPtr owner);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CloseClipboard();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetClipboardData(uint format);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsClipboardFormatAvailable(uint format);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern uint RegisterClipboardFormat(string format);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GlobalLock(IntPtr memory);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GlobalUnlock(IntPtr memory);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern UIntPtr GlobalSize(IntPtr memory);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern uint DragQueryFile(IntPtr drop, uint index, char[]? file, uint length);
+
+    // ---- 前台窗口与进程 ----
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
 }

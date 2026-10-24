@@ -24,6 +24,9 @@ internal sealed class TaskbarSink : IDisposable
     /// <summary>托盘图标回调：参数是 (通知码, 图标 id)。</summary>
     public Action<int, int>? TrayCallback { get; set; }
 
+    /// <summary>WM_CLIPBOARDUPDATE：有程序改了剪贴板。</summary>
+    public Action? ClipboardUpdated { get; set; }
+
     public TaskbarSink()
     {
         _taskbarCreatedMessage = NativeMethods.RegisterWindowMessage("TaskbarCreated");
@@ -52,6 +55,11 @@ internal sealed class TaskbarSink : IDisposable
         else if (message == NativeMethods.WmHotkey)
         {
             handled = HotkeyReceived?.Invoke(wParam.ToInt32()) ?? false;
+        }
+        else if (message == NativeMethods.WmClipboardUpdate)
+        {
+            ClipboardUpdated?.Invoke();
+            handled = true;
         }
         else if (message == NativeMethods.TrayCallbackMessage)
         {

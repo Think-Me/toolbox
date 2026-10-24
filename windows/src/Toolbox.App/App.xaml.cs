@@ -1,9 +1,12 @@
 using System.Windows;
+using System.Windows.Threading;
 using Toolbox.App.Actions;
+using Toolbox.App.Clipboard;
 using Toolbox.App.Diagnostics;
 using Toolbox.App.Hotkeys;
 using Toolbox.App.Settings;
 using Toolbox.App.Shell;
+using Toolbox.Core.Clipboard;
 using Toolbox.Core.Infrastructure;
 using Toolbox.Core.Settings;
 using Toolbox.Core.Shell;
@@ -26,6 +29,9 @@ public partial class App : Application
     private HotkeyRegistrationTable? _hotkeyTable;
     private AppActionTable? _actions;
     private SettingsWindow? _settingsWindow;
+    private ClipboardStore? _clipboardStore;
+    private ClipboardMonitor? _monitor;
+    private DispatcherTimer? _clipboardCoalesce;
 
     private bool _probeMode;
     private bool _reportingCrash;
@@ -81,6 +87,12 @@ public partial class App : Application
         var failures = _hotkeys.RegisterAll(_hotkeyTable);
         ReportHotkeyFailures(failures);
 
+        _clipboardStore = new ClipboardStore(_paths.ClipboardDatabase, _paths.MediaDirectory);
+        _monitor = new ClipboardMonitor(_clipboardStore, _settings, _log);
+        _sink.ClipboardUpdated = OnClipboardUpdated;
+        if (!NativeMethods.AddClipboardFormatListener(_sink.Handle))
+            _log.Error("注册剪贴板监听失败，历史采集不可用");
+
         if (_probeMode)
         {
             FinishProbe(trayInstalled, failures);
@@ -91,6 +103,29 @@ public partial class App : Application
     }
 
     private static int TotalHotkeys => Enum.GetValues<HotkeyId>().Length;
+
+    /// <summary>
+    /// 一次复制会按格式连发多条 WM_CLIPBOARDUPDATE（Text / UnicodeText / OEMText …）。
+    /// 不合并的话同一条内容会被读三遍，copy_count 也被虚增。用一个很短的定时器把突发并成一次。
+    /// </summary>
+    private void OnClipboardUpdated()
+    {
+        _clipboardCoalesce ??= CreateCoalesceTimer();
+        _clipboardCoalesce.Stop();
+        _clipboardCoalesce.Start();
+    }
+
+    private DispatcherTimer CreateCoalesceTimer()
+    {
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            var item = _monitor?.Capture();
+            if (item is not null) _log?.Info($"采集 {item.Kind}：{item.DisplayPreview}");
+        };
+        return timer;
+    }
 
     /// <summary>explorer 崩溃重启会清掉所有托盘图标，只能重新挂一次。</summary>
     private void OnTaskbarCreated()
@@ -167,7 +202,7 @@ public partial class App : Application
     private void ToggleRecording()
     {
         _recording = !_recording;
-        // 采集器在 P1 接入；现在先只维护状态，菜单勾选会立刻反映出来。
+        if (_monitor is not null) _monitor.Paused = !_recording;
         _log?.Info(_recording ? "恢复剪贴板记录" : "暂停剪贴板记录");
     }
 
@@ -257,6 +292,16 @@ public partial class App : Application
 
         _probe.Line($"loginitem.enabled={LoginItem.IsEnabled()}");
 
+        var latest = _clipboardStore?.Latest();
+        _probe.Line($"clipboard.paused={_monitor?.Paused}");
+        _probe.Line(latest is null
+            ? "clipboard.latest=<empty>"
+            : $"clipboard.latest={latest.Kind} \"{latest.DisplayPreview}\" from={latest.SourceProcess}");
+
+        var dib = ClipboardDibSelfTest.Run();
+        _probe.Line($"clipboard.dib-convert={dib.Detail}");
+        if (!dib.Ok) _probe.Fail("DIB→PNG 转换失败：" + dib.Detail);
+
         // XAML 的解析错误编译期查不出来，只有真的构造一次才知道。不 Show，避免弹窗打断脚本。
         try
         {
@@ -318,6 +363,8 @@ public partial class App : Application
     {
         // 注销热键要在窗口销毁之前：Handle 没了再注销会失败，键位就留在系统里被"占着"。
         _hotkeys?.UnregisterAll();
+        if (_sink is not null) NativeMethods.RemoveClipboardFormatListener(_sink.Handle);
+        _clipboardStore?.Dispose();
         _tray?.Dispose();
         _sink?.Dispose();
         _instance?.Dispose();
