@@ -193,6 +193,17 @@ public sealed class ClipboardStore : IDisposable
         return File.Exists(path) ? File.ReadAllBytes(path) : null;
     }
 
+    /// <summary>数据库里引用到的全部图片哈希，给媒体清理做对照。</summary>
+    public List<string> AllMediaShas()
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = "SELECT DISTINCT media_sha FROM clipboard_items WHERE media_sha IS NOT NULL;";
+        using var reader = cmd.ExecuteReader();
+        var shas = new List<string>();
+        while (reader.Read()) shas.Add(reader.GetString(0));
+        return shas;
+    }
+
     public void Dispose() => _connection.Dispose();
 
     private void Execute(string sql)

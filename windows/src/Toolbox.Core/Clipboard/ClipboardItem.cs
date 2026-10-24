@@ -74,4 +74,34 @@ public static class ClipboardMedia
 {
     public static string PathFor(string directory, string sha) =>
         Path.Combine(directory, sha + ".png");
+
+    /// <summary>
+    /// 删除数据库已经不引用的图片文件（淘汰/删除条目后留下的孤儿）。返回删除个数。
+    /// 文件名就是 sha256，按文件名对照即可，不用读内容。
+    /// </summary>
+    public static int Cleanup(string directory, IEnumerable<string?> referencedShas)
+    {
+        if (!Directory.Exists(directory)) return 0;
+
+        var keep = referencedShas
+            .Where(sha => !string.IsNullOrEmpty(sha))
+            .Select(sha => sha!)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var removed = 0;
+        foreach (var file in Directory.EnumerateFiles(directory, "*.png"))
+        {
+            if (keep.Contains(Path.GetFileNameWithoutExtension(file))) continue;
+            try
+            {
+                File.Delete(file);
+                removed++;
+            }
+            catch
+            {
+                // 被占用的文件下次启动再删，不值得为此中断
+            }
+        }
+        return removed;
+    }
 }

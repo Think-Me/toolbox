@@ -95,6 +95,8 @@ public partial class App : Application
 
         _clipboardStore = new ClipboardStore(_paths.ClipboardDatabase, _paths.MediaDirectory);
         _monitor = new ClipboardMonitor(_clipboardStore, _settings, _log);
+        var orphaned = ClipboardMedia.Cleanup(_paths.MediaDirectory, _clipboardStore.AllMediaShas());
+        if (orphaned > 0) _log?.Info($"清理孤立媒体文件 {orphaned} 个");
         _sink.ClipboardUpdated = OnClipboardUpdated;
         if (!NativeMethods.AddClipboardFormatListener(_sink.Handle))
             _log.Error("注册剪贴板监听失败，历史采集不可用");

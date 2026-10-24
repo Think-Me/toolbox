@@ -1,9 +1,30 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using Toolbox.Core.Clipboard;
 
 namespace Toolbox.App.Clipboard;
+
+/// <summary>列表一行的展示数据。缩略图按需解码并缓存（sha 是内容寻址，缓存永不过期）。</summary>
+internal sealed class ClipboardRow
+{
+    public ClipboardRow(ClipboardItem item, ImageSource? thumbnail)
+    {
+        Item = item;
+        // 置顶的行加前缀，让用户在列表里一眼看到它为什么排在最上面
+        Preview = (item.Pinned ? "[置顶] " : "") + item.DisplayPreview;
+        Source = item.SourceProcess ?? "";
+        Thumbnail = thumbnail;
+    }
+
+    public ClipboardItem Item { get; }
+    public string Preview { get; }
+    public string Source { get; }
+    public ImageSource? Thumbnail { get; }
+}
 
 /// <summary>
 /// 剪贴板历史面板。无边框、置顶、不占任务栏。
@@ -22,6 +43,7 @@ internal partial class ClipboardPanelWindow : Window
     private List<ClipboardItem> _items = [];
     private ClipboardListSelection _selection = new(0);
     private bool _suppressReload;
+    private readonly Dictionary<string, BitmapSource> _thumbnails = [];
 
     public ClipboardPanelWindow(ClipboardStore store,
                                 Func<ClipboardItem, (PasteOutcome Outcome, string Message)> paste,
@@ -60,13 +82,42 @@ internal partial class ClipboardPanelWindow : Window
     private void Reload()
     {
         _items = _store.List(SearchBox.Text, 200).ToList();
-        ItemsList.ItemsSource = _items;
+        ItemsList.ItemsSource = _items.Select(item => new ClipboardRow(item, ThumbnailFor(item))).ToList();
         _selection.ApplyFilter(_items.Count);
         SyncSelection();
 
         StatusText.Text = _items.Count == 0
             ? "没有匹配的记录"
             : $"{_items.Count} 条 · ↑↓ 选择 · Enter 粘贴 · Ctrl+P 置顶 · Del 删除 · Esc 关闭";
+    }
+
+    /// <summary>图片缩略图。DecodePixelWidth=48：几百张 4K 图也不会把内存吃光。</summary>
+    private ImageSource? ThumbnailFor(ClipboardItem item)
+    {
+        var sha = item.MediaSha256;
+        if (sha is null) return null;
+        if (_thumbnails.TryGetValue(sha, out var cached)) return cached;
+
+        var png = _store.LoadImage(sha);
+        if (png is null) return null;
+
+        try
+        {
+            var image = new BitmapImage();
+            image.BeginInit();
+            image.DecodePixelWidth = 48;
+            image.StreamSource = new MemoryStream(png);
+            image.CacheOption = BitmapCacheOption.OnLoad;
+            image.EndInit();
+            image.Freeze();
+            _thumbnails[sha] = image;
+            return image;
+        }
+        catch
+        {
+            // 缩略图解不出来不影响条目本身，显示成无图行
+            return null;
+        }
     }
 
     /// <summary>用键盘改了选中行之后，把 ListBox 的高亮跟上，两者不能各说各话。</summary>

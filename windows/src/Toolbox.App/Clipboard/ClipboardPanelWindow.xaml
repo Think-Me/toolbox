@@ -38,13 +38,20 @@
                      MouseDoubleClick="OnItemDoubleClick">
                 <ListBox.ItemTemplate>
                     <DataTemplate>
-                        <StackPanel Margin="2,4">
-                            <TextBlock Text="{Binding DisplayPreview}"
-                                       TextTrimming="CharacterEllipsis"
-                                       MaxWidth="420" />
-                            <TextBlock Text="{Binding SourceProcess}"
-                                       FontSize="11"
-                                       Foreground="#999" />
+                        <StackPanel Margin="2,4" Orientation="Horizontal">
+                            <Image Source="{Binding Thumbnail}"
+                                   MaxHeight="32"
+                                   MaxWidth="48"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,8,0" />
+                            <StackPanel>
+                                <TextBlock Text="{Binding Preview}"
+                                           TextTrimming="CharacterEllipsis"
+                                           MaxWidth="400" />
+                                <TextBlock Text="{Binding Source}"
+                                           FontSize="11"
+                                           Foreground="#999" />
+                            </StackPanel>
                         </StackPanel>
                     </DataTemplate>
                 </ListBox.ItemTemplate>
