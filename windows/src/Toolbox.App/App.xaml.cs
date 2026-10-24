@@ -15,12 +15,14 @@ using Toolbox.App.Hosts;
 using Toolbox.App.Settings;
 using Toolbox.App.Shell;
 using Toolbox.App.Translation;
+using Toolbox.App.Update;
 using Toolbox.Core.Clipboard;
 using Toolbox.Core.Hosts;
 using Toolbox.Core.Infrastructure;
 using Toolbox.Core.Settings;
 using Toolbox.Core.Shell;
 using Toolbox.Core.Translation;
+using Velopack;
 
 namespace Toolbox.App;
 
@@ -63,6 +65,9 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        // Velopack 的生命周期钩子必须在最前面：更新器重启时会带特殊参数进来
+        VelopackApp.Build().Run();
+
         _probeMode = e.Args.Contains("--probe");
         _pasteProbeMode = e.Args.Contains("--paste-probe");
         _translateProbeMode = e.Args.Contains("--translate-probe");
@@ -155,6 +160,13 @@ public partial class App : Application
             FinishProbe(trayInstalled, failures);
             return;
         }
+
+        // 自动更新：仅安装版生效（绿色目录/调试跳过）；网络不可用静默降级
+        var updateService = new UpdateService(
+            () => _settings.UpdateUrl,
+            ReportStatus,
+            (manager, updateInfo) => manager.ApplyUpdatesAndRestart(updateInfo));
+        updateService.CheckForUpdates();
 
         _log?.Info($"骨架就绪：托盘={trayInstalled} 热键 {TotalHotkeys - failures.Count}/{TotalHotkeys}");
     }

@@ -238,10 +238,14 @@ Core 只放了与平台无关的几何：
 - [ ] 椭圆/文字标注。
 - [ ] 多显示器：v1 只抓光标所在那台；混合 DPI 已按 PerMonitorV2 逐屏取，拼接待做。
 
-### P5 发布（1–2 周）
-- [ ] self-contained `win-x64` 单文件发布 + 安装器（Velopack）。
-- [ ] 代码签名（OV/EV），否则 SmartScreen 会拦。
-- [ ] 自动更新与版本清单（与 macOS 的 release manifest 对齐）。
+### P5 发布（已完成，签名除外）
+- [x] 自包含 `win-x64` 发布 + **Velopack** 安装器/便携包/更新包（`vpk pack`，见 App csproj 的
+      `PublishElevatedHelper` / `CopyElevatedHelper`；`windows/Build/Releases/` 为产物）。
+- [x] 自动更新：App 内置 Velopack（`VelopackApp` + `UpdateService`），仅安装版生效；
+      更新源 = settings.json 的 `updateUrl`（默认 GitHub releases `stable` tag，留空关闭）。
+      发现新版本 → 后台下载 → 退出时自动安装。
+- [ ] 代码签名（OV/EV 证书需购买，未做）：未签名 exe 会被 SmartScreen/杀软拦。
+- 注：安装器里 hosts helper 是自包含单文件；**代码签名时 vpk 会连 helper 一起签**。
 
 ## 测试策略
 

@@ -127,6 +127,12 @@ public sealed class AppSettings
     public ClipboardSettings Clipboard { get; set; } = new();
     public CaptureSettings Capture { get; set; } = new();
     public Translation.TranslationSettings Translation { get; set; } = new();
+
+    /// <summary>
+    /// 自动更新源：一个能直接下载 Velopack 产物的 URL（含 releases.win.json）。
+    /// 留空 = 不检查更新。GitHub 建议固定一个 tag（例如 stable），把 vpk 产物反复替换上去。
+    /// </summary>
+    public string UpdateUrl { get; set; } = "https://github.com/Think-Me/toolbox/releases/download/stable";
 }
 
 public static class SettingsJson

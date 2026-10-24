@@ -16,20 +16,27 @@
     <ProjectReference Include="..\Toolbox.Core\Toolbox.Core.csproj" />
     <!-- TTS 朗读：System.Speech（SAPI 封装，仅 Windows） -->
     <PackageReference Include="System.Speech" Version="8.0.*" />
-    <!-- 只为让 Elevated 先构建；App 不引用其程序集（通过进程边界调用它） -->
-    <ProjectReference Include="..\Toolbox.Elevated\Toolbox.Elevated.csproj"
-                      ReferenceOutputAssembly="false" />
+    <!-- 自动更新：安装器与更新清单由 vpk 生成 -->
+    <PackageReference Include="Velopack" Version="1.*" />
   </ItemGroup>
 
-  <!-- hosts 提权 helper 要在 App 旁边才能被找到（Debug 用 Elevated 的自包含单文件） -->
+  <!--
+    hosts 提权 helper（Toolbox.Elevated）：不走 ProjectReference ——
+    App 自包含发布时，项目引用会把 helper 的 apphost 反拷进发布目录，覆盖掉我们的单文件。
+    这里直接 publish 成**自包含单文件**（helper 由 runas 提权启动，拿不到 DOTNET_ROOT，
+    框架依赖的 exe 提权下会因找不到运行时直接失败，实测踩过），再拷到 App 旁边。
+  -->
+  <Target Name="PublishElevatedHelper" BeforeTargets="Build;Publish">
+    <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\Toolbox.Elevated\Toolbox.Elevated.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true -p:PublishSingleFile=true -o &quot;$(MSBuildThisFileDirectory)..\Toolbox.Elevated\bin\single&quot;" />
+  </Target>
   <Target Name="CopyElevatedHelper" AfterTargets="Build;Publish">
-    <ItemGroup Condition="'$(Configuration)' == 'Debug'">
-      <ElevatedExe Include="..\Toolbox.Elevated\bin\single\Toolbox.Elevated.exe" />
+    <ItemGroup>
+      <ElevatedFiles Include="..\Toolbox.Elevated\bin\single\Toolbox.Elevated.exe" />
     </ItemGroup>
-    <ItemGroup Condition="'$(Configuration)' != 'Debug'">
-      <ElevatedExe Include="..\Toolbox.Elevated\bin\$(Configuration)\$(TargetFramework)\Toolbox.Elevated.exe" />
-    </ItemGroup>
-    <Copy SourceFiles="@(ElevatedExe)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(ElevatedFiles)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <!-- publish 时 OutDir 是 bin 目录，发布产物在 PublishDir，两处都要有 -->
+    <Copy SourceFiles="@(ElevatedFiles)" DestinationFolder="$(PublishDir)"
+          Condition="'$(PublishDir)' != ''" SkipUnchangedFiles="true" />
   </Target>
 
   <ItemGroup>
