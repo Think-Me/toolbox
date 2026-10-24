@@ -31,23 +31,31 @@ internal partial class HostsTab : UserControl
         RulesPanel.Children.Clear();
         foreach (var group in Library.Groups)
         {
-            if (Library.Groups.Count > 1)
+            var groupHeader = new DockPanel { Margin = new Thickness(0, 10, 0, 4) };
+            groupHeader.Children.Add(new TextBlock
             {
-                RulesPanel.Children.Add(new TextBlock
-                {
-                    Text = group.Name,
-                    FontWeight = FontWeights.SemiBold,
-                    Margin = new Thickness(0, 10, 0, 4),
-                });
-            }
+                Text = group.Name,
+                FontWeight = FontWeights.SemiBold,
+            });
+            var addButton = new Button
+            {
+                Content = "＋ 规则",
+                Padding = new Thickness(8, 1, 8, 1),
+                HorizontalAlignment = HorizontalAlignment.Right,
+            };
+            var capturedGroup = group;
+            addButton.Click += (_, _) => AddRule(capturedGroup);
+            groupHeader.Children.Add(addButton);
+            RulesPanel.Children.Add(groupHeader);
 
             foreach (var rule in group.Rules)
             {
+                var row = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
                 var check = new CheckBox
                 {
                     Content = rule.Name,
                     IsChecked = rule.Enabled,
-                    Margin = new Thickness(0, 3, 0, 3),
+                    VerticalAlignment = VerticalAlignment.Center,
                 };
                 var captured = rule;
                 check.Click += (_, _) =>
@@ -57,7 +65,22 @@ internal partial class HostsTab : UserControl
                     _context.HostsChanged();
                     SetStatus($"规则「{captured.Name}」已{(captured.Enabled ? "启用" : "停用")}，正在应用…", error: false);
                 };
-                RulesPanel.Children.Add(check);
+                row.Children.Add(check);
+
+                var buttons = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                };
+                var edit = new Button { Content = "编辑", Padding = new Thickness(8, 1, 8, 1), Margin = new Thickness(4, 0, 0, 0) };
+                edit.Click += (_, _) => EditRule(capturedGroup, captured);
+                var delete = new Button { Content = "删除", Padding = new Thickness(8, 1, 8, 1), Margin = new Thickness(4, 0, 0, 0) };
+                delete.Click += (_, _) => DeleteRule(capturedGroup, captured);
+                buttons.Children.Add(edit);
+                buttons.Children.Add(delete);
+                row.Children.Add(buttons);
+
+                RulesPanel.Children.Add(row);
             }
         }
 
@@ -80,6 +103,47 @@ internal partial class HostsTab : UserControl
     {
         _context.RestoreHosts();
         SetStatus("正在恢复原始 hosts（会弹 UAC）……", error: false);
+    }
+
+    private void AddRule(RuleGroup group)
+    {
+        var rule = new HostsRule { Name = "新规则", Enabled = false };
+        if (!RuleEditDialog.Edit(Window.GetWindow(this), rule, group.Name)) return;
+
+        if (Library.Groups.FirstOrDefault(g => g.Name == group.Name) is not { } target)
+        {
+            target = new RuleGroup { Name = group.Name };
+            Library.Groups.Add(target);
+        }
+        target.Rules.Add(rule);
+        _context.HostsChanged();
+        Reload();
+        SetStatus($"规则「{rule.Name}」已添加（未启用，勾选后生效）", error: false);
+    }
+
+    private void EditRule(RuleGroup group, HostsRule rule)
+    {
+        if (!RuleEditDialog.Edit(Window.GetWindow(this), rule, group.Name)) return;
+        _context.HostsChanged();
+        Reload();
+        SetStatus($"规则「{rule.Name}」已修改，正在应用…", error: false);
+    }
+
+    private void DeleteRule(RuleGroup group, HostsRule rule)
+    {
+        var confirm = MessageBox.Show(
+            Window.GetWindow(this),
+            $"删除规则「{rule.Name}」？",
+            "Toolbox",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (confirm != MessageBoxResult.Yes) return;
+
+        group.Rules.Remove(rule);
+        if (group.Rules.Count == 0 && Library.Groups.Count > 1) Library.Groups.Remove(group);
+        _context.HostsChanged();
+        Reload();
+        SetStatus($"规则「{rule.Name}」已删除，正在应用…", error: false);
     }
 
     private void SetStatus(string text, bool error)
