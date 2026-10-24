@@ -1,0 +1,12 @@
+# 仓库内统一存 LF，检出也用 LF —— 这是 macOS(swift) + Windows(.NET) 双端工程，
+# 全局 core.autocrlf=true 会把脚本改写成 CRLF，在 macOS 上直接跑不起来。
+* text=auto eol=lf
+
+# shell 脚本必须 LF，否则报 "bad interpreter: /bin/bash^M"
+*.sh      text eol=lf
+*.command text eol=lf
+Makefile  text eol=lf
+
+# 二进制资源，不做换行转换
+*.icns binary
+*.png  binary
