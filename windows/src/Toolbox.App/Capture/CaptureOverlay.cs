@@ -13,17 +13,21 @@ internal enum CaptureTool
 {
     None,
     Rectangle,
+    Ellipse,
     Arrow,
     Pen,
+    Text,
     Mosaic,
 }
 
 /// <summary>标注的纯数据。坐标全部是**选区内 DIP**，导出时按 DPI 换算成像素。</summary>
 internal abstract record Annotation;
 internal sealed record RectNote(Rect R) : Annotation;
+internal sealed record EllipseNote(Rect R) : Annotation;
 internal sealed record ArrowNote(Point From, Point To) : Annotation;
 internal sealed record PenNote(IReadOnlyList<Point> Points) : Annotation;
 internal sealed record MosaicNote(Rect R) : Annotation;
+internal sealed record TextNote(Point Position, string Text) : Annotation;
 
 /// <summary>
 /// 截图遮罩窗：盖住光标所在显示器，压暗，划出选区后选区内"亮起来"，
@@ -162,8 +166,10 @@ internal sealed class CaptureOverlay : Window
         }
 
         AddTool(CaptureTool.Rectangle, "矩形");
+        AddTool(CaptureTool.Ellipse, "椭圆");
         AddTool(CaptureTool.Arrow, "箭头");
         AddTool(CaptureTool.Pen, "画笔");
+        AddTool(CaptureTool.Text, "文字");
         AddTool(CaptureTool.Mosaic, "马赛克");
 
         var undo = new Button { Content = "撤销", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(8, 2, 2, 2) };
@@ -242,6 +248,13 @@ internal sealed class CaptureOverlay : Window
                     StrokeThickness = NoteThickness,
                 }, _start);
                 break;
+            case CaptureTool.Ellipse:
+                BeginPreview(new Ellipse
+                {
+                    Stroke = NoteBrush,
+                    StrokeThickness = NoteThickness,
+                }, _start);
+                break;
             case CaptureTool.Arrow:
                 BeginPreview(new Line
                 {
@@ -257,6 +270,11 @@ internal sealed class CaptureOverlay : Window
                     Stroke = NoteBrush,
                     StrokeThickness = 1,
                 }, _start);
+                break;
+            case CaptureTool.Text:
+                // 文字不需要拖拽：落点弹输入框，回车提交
+                _dragging = false;
+                ShowTextBox(_start);
                 break;
         }
     }
@@ -319,6 +337,9 @@ internal sealed class CaptureOverlay : Window
             case CaptureTool.Rectangle:
                 CommitPreview(new RectNote(RectFrom(_start, end)));
                 break;
+            case CaptureTool.Ellipse:
+                CommitPreview(new EllipseNote(RectFrom(_start, end)));
+                break;
             case CaptureTool.Mosaic:
                 CommitPreview(new MosaicNote(RectFrom(_start, end)));
                 break;
@@ -331,6 +352,58 @@ internal sealed class CaptureOverlay : Window
                 _penPoints = [];
                 break;
         }
+    }
+
+    /// <summary>文字标注：落点放一个输入框，Enter 提交、Esc 或空文本取消。</summary>
+    private void ShowTextBox(Point position)
+    {
+        ClearPreview();
+        _previewCanvas.Visibility = Visibility.Visible;
+
+        var box = new TextBox
+        {
+            MinWidth = 120,
+            Background = Brushes.White,
+            BorderBrush = NoteBrush,
+            BorderThickness = new Thickness(1),
+            FontSize = 14,
+        };
+        Canvas.SetLeft(box, position.X);
+        Canvas.SetTop(box, position.Y);
+        _previewCanvas.Children.Add(box);
+        box.Focus();
+
+        void Commit()
+        {
+            var text = box.Text.Trim();
+            _previewCanvas.Children.Remove(box);
+            if (_previewCanvas.Children.Count == 0) _previewCanvas.Visibility = Visibility.Collapsed;
+            if (text.Length > 0)
+            {
+                _annotations.Add(new TextNote(position, text));
+                RenderAnnotations();
+            }
+        }
+
+        box.KeyDown += (_, e) =>
+        {
+            switch (e.Key)
+            {
+                case Key.Enter:
+                    Commit();
+                    e.Handled = true;
+                    break;
+                case Key.Escape:
+                    _previewCanvas.Children.Remove(box);
+                    if (_previewCanvas.Children.Count == 0) _previewCanvas.Visibility = Visibility.Collapsed;
+                    e.Handled = true;
+                    break;
+            }
+        };
+        box.LostKeyboardFocus += (_, _) =>
+        {
+            if (_previewCanvas.Children.Contains(box)) Commit();
+        };
     }
 
     // ---- 选区 ----
@@ -433,6 +506,30 @@ internal sealed class CaptureOverlay : Window
             case RectNote rect:
                 dc.DrawRectangle(null, pen, Scale(rect.R, scale));
                 break;
+
+            case EllipseNote ellipse:
+            {
+                var r = Scale(ellipse.R, scale);
+                // DrawEllipse 要的是左上角 + 半径，WPF Rect 的坐标语义在这里要手动换
+                dc.DrawEllipse(null, pen,
+                    new Point(r.X + r.Width / 2, r.Y + r.Height / 2),
+                    r.Width / 2, r.Height / 2);
+                break;
+            }
+
+            case TextNote text:
+            {
+                var formatted = new FormattedText(
+                    text.Text,
+                    System.Globalization.CultureInfo.CurrentCulture,
+                    FlowDirection.LeftToRight,
+                    new Typeface(new FontFamily("Microsoft YaHei"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal),
+                    14 * scale,
+                    new SolidColorBrush(NoteColor),
+                    scale);
+                dc.DrawText(formatted, Times(text.Position, scale));
+                break;
+            }
 
             case ArrowNote arrow:
             {
