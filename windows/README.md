@@ -62,6 +62,20 @@ dotnet run --project src/Toolbox.App/Toolbox.App.csproj   # 启动托盘 App（�
 冒烟检查（脚本友好）：`Toolbox.App.exe --probe` 会把托盘、热键注册结果、开机自启状态、
 设置窗能否加载写进 `%LOCALAPPDATA%\Toolbox\probe.txt`，全通过时退出码 0，否则 1。
 
+打包成**可双击运行的自包含目录**（目标机器不需要装 .NET）：
+
+```powershell
+dotnet publish src/Toolbox.App/Toolbox.App.csproj -p:PublishProfile=win-x64
+# 产物：windows/Build/win-x64/Toolbox.App.exe（约 251 个文件 / 134 MB）
+```
+
+刻意不用单文件：托盘图标是用 `LoadImage(LR_LOADFROMFILE)` 从 `Assets/Toolbox.ico` 读的，
+单文件打包后这个文件不在磁盘上，得先改成嵌入资源再从内存建 `HICON`。留到 P5 做安装器时一起处理。
+
+> 如果 SDK 装在用户目录（`%USERPROFILE%\.dotnet`）而不是 `C:\Program Files\dotnet`，
+> 直接双击 `bin/Debug` 下的 exe 会报"缺少 .NET 运行时"，因为 apphost 只认系统安装位置。
+> 要么设 `DOTNET_ROOT`，要么用上面的自包含产物。
+
 macOS 上也能跑核心层（WPF 项目不能编译）：
 
 ```bash
