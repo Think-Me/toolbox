@@ -2,6 +2,7 @@ using System.Windows;
 using Toolbox.App.Actions;
 using Toolbox.App.Diagnostics;
 using Toolbox.App.Hotkeys;
+using Toolbox.App.Settings;
 using Toolbox.App.Shell;
 using Toolbox.Core.Infrastructure;
 using Toolbox.Core.Settings;
@@ -15,6 +16,7 @@ public partial class App : Application
     private readonly ProbeReport _probe = new();
 
     private RollingFileLogger? _log;
+    private SettingsStore? _store;
     private AppSettings _settings = new();
     private SingleInstance? _instance;
     private TaskbarSink? _sink;
@@ -23,6 +25,7 @@ public partial class App : Application
     private HotkeyService? _hotkeys;
     private HotkeyRegistrationTable? _hotkeyTable;
     private AppActionTable? _actions;
+    private SettingsWindow? _settingsWindow;
 
     private bool _probeMode;
     private bool _reportingCrash;
@@ -57,7 +60,8 @@ public partial class App : Application
 
         _instance.ActivationRequested += () => Dispatcher.BeginInvoke(ShowSettings);
 
-        _settings = new SettingsStore(_paths.Settings).Load();
+        _store = new SettingsStore(_paths.Settings);
+        _settings = _store.Load();
 
         _sink = new TaskbarSink();
         _tray = new TrayIcon(_sink.Handle);
@@ -183,9 +187,36 @@ public partial class App : Application
 
     private void ShowSettings()
     {
-        // 设置窗在 S4 接入。
-        _log?.Info("请求打开设置（窗口待接入）");
-        _tray?.ShowBalloon("Toolbox", "已经在运行了。设置窗口将在下一步接入。");
+        if (_settingsWindow is null)
+        {
+            _settingsWindow = new SettingsWindow(BuildContext());
+            _settingsWindow.Closed += (_, _) => _settingsWindow = null;
+        }
+
+        _settingsWindow.Show();
+        _settingsWindow.Activate();
+    }
+
+    private SettingsContext BuildContext() => new()
+    {
+        Paths = _paths,
+        Hotkeys = _hotkeyTable!,
+        Failures = _hotkeys?.Failures ?? [],
+        ProbeFree = gesture => _hotkeys?.Probe(gesture) ?? false,
+        ApplyHotkeys = ApplyHotkeys,
+        Log = message => _log?.Info(message),
+    };
+
+    /// <summary>绑定表已经改过之后再调用：写盘 → 全部重注册 → 返回失败项。</summary>
+    private IReadOnlyList<HotkeyFailure> ApplyHotkeys()
+    {
+        _hotkeyTable!.ApplyTo(_settings.Hotkeys);
+        _store!.Save(_settings);
+
+        var failures = _hotkeys!.RegisterAll(_hotkeyTable);
+        if (failures.Count > 0) ReportHotkeyFailures(failures);
+        _log?.Info($"热键已保存并重新注册，失败 {failures.Count} 项");
+        return failures;
     }
 
     private void ReportHotkeyFailures(IReadOnlyList<HotkeyFailure> failures)
@@ -225,6 +256,18 @@ public partial class App : Application
         if (failures.Count > 0) _probe.Fail($"{failures.Count} 个热键注册失败");
 
         _probe.Line($"loginitem.enabled={LoginItem.IsEnabled()}");
+
+        // XAML 的解析错误编译期查不出来，只有真的构造一次才知道。不 Show，避免弹窗打断脚本。
+        try
+        {
+            var probeWindow = new SettingsWindow(BuildContext());
+            probeWindow.Close();
+            _probe.Line("settingswindow.loaded=true");
+        }
+        catch (Exception error)
+        {
+            _probe.Fail("设置窗加载失败：" + error.Message);
+        }
 
         _probe.Write(_paths.ProbeReport);
         _log?.Info($"probe 完成 ok={_probe.Ok} -> {_paths.ProbeReport}");

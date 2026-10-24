@@ -1,0 +1,18 @@
+<UserControl x:Class="Toolbox.App.Settings.HotkeyRecorderBox"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Focusable="True"
+             MinWidth="170"
+             PreviewKeyDown="OnPreviewKeyDown"
+             LostKeyboardFocus="OnLostKeyboardFocus">
+    <Border x:Name="Frame"
+            BorderThickness="1"
+            BorderBrush="#C8C8C8"
+            CornerRadius="4"
+            Padding="10,5"
+            Background="#FAFAFA"
+            Cursor="Hand"
+            MouseLeftButtonDown="OnFrameMouseDown">
+        <TextBlock x:Name="Caption" Text="点击录制" HorizontalAlignment="Center" />
+    </Border>
+</UserControl>

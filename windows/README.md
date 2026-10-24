@@ -2,8 +2,9 @@
 
 macOS 版的功能对等移植，技术栈 **.NET 10 + WPF**。本目录是独立解决方案，和根目录的 Swift 工程互不影响。
 
-> 当前状态：**核心逻辑层已完成并通过测试；WPF 界面层尚未开始。**
-> 也就是说，这个目录现在可以 `dotnet test`，但还不能双击运行出一个托盘 App。
+> 当前状态：**核心逻辑层完成；P0 骨架已可运行** —— 托盘图标、单实例、全局热键、
+> 设置窗（通用页）、日志与崩溃兜底都已接通。
+> 剪贴板 / 翻译 / Hosts / 截图四个模块仍是占位，点菜单会明确告诉你它在哪个阶段实现（P1–P4）。
 
 ## 为什么是 WPF
 
@@ -18,26 +19,33 @@ macOS 版的功能对等移植，技术栈 **.NET 10 + WPF**。本目录是独�
 |---|---|---|
 | `Toolbox.Core` | `net10.0` | 纯逻辑，可跨平台单测 |
 | `Toolbox.Core.Tests` | `net10.0` | xUnit |
-| `Toolbox.App`（待建） | `net10.0-windows` | WPF，`UseWPF=true`，`WinExe` |
+| `Toolbox.App` | `net10.0-windows` | WPF，`UseWPF=true`，`WinExe`，x64 |
 | `Toolbox.Elevated`（待建） | `net10.0-windows` | 控制台/WinExe，仅做 hosts 写入 |
 
 ## 目录
 
 ```
 windows/
-  Toolbox.slnx                  # 当前只含 Core + Tests
+  Toolbox.slnx                  # Core + App + Tests
   Directory.Build.props
   src/
     Toolbox.Core/
-      Settings/                 # AppSettings、热键解析、JSON 读写
+      Infrastructure/           # AppPaths、滚动日志
+      Shell/                    # 托盘菜单的纯数据契约（TrayMenuBuilder）
+      Settings/                 # AppSettings、热键解析与校验、JSON 读写
       Hosts/                    # 规则模型 + 哨兵块编译器
       Clipboard/                # 条目模型、采集策略、SQLite 存储
       Translation/              # 引擎、语言码、网络策略、HTTP 客户端
       Capture/                  # 虚拟桌面/选区/DPI/马赛克几何
-    Toolbox.App/                # 待建：托盘、热键、各模块 UI
+    Toolbox.App/                # P0：托盘、热键、设置窗、日志
+      Shell/                    # TaskbarSink、TrayIcon、TrayMenu、SingleInstance、LoginItem
+      Hotkeys/                  # HotkeyService（RegisterHotKey 包装）
+      Actions/                  # AppActionTable（菜单与热键共用）
+      Settings/                 # SettingsWindow、HotkeyRecorderBox、占位页
+      Diagnostics/              # --probe 报告
     Toolbox.Elevated/           # 待建：提权写 hosts
   tests/
-    Toolbox.Core.Tests/         # 58 个用例（2026-10-24）
+    Toolbox.Core.Tests/         # 98 个用例（2026-10-24）
 ```
 
 ## 构建与测试
@@ -47,8 +55,12 @@ Windows 10 1903+ / Windows 11，安装 [.NET 10 SDK](https://dotnet.microsoft.co
 ```powershell
 winget install Microsoft.DotNet.SDK.10
 cd windows
-dotnet test Toolbox.slnx
+dotnet test Toolbox.slnx        # 单元测试
+dotnet run --project src/Toolbox.App/Toolbox.App.csproj   # 启动托盘 App（无窗口）
 ```
+
+冒烟检查（脚本友好）：`Toolbox.App.exe --probe` 会把托盘、热键注册结果、开机自启状态、
+设置窗能否加载写进 `%LOCALAPPDATA%\Toolbox\probe.txt`，全通过时退出码 0，否则 1。
 
 macOS 上也能跑核心层（WPF 项目不能编译）：
 
@@ -56,7 +68,8 @@ macOS 上也能跑核心层（WPF 项目不能编译）：
 ~/.dotnet/dotnet test windows/tests/Toolbox.Core.Tests/Toolbox.Core.Tests.csproj
 ```
 
-CI：`.github/workflows/windows.yml` 在 `windows-latest` 上 restore/build/test。UI 项目加入后同一工作流会一起编译。
+CI：`.github/workflows/windows.yml` 在 `windows-latest` 上 restore/build/test，`Toolbox.App` 也会一起编译。
+但 CI 没有交互桌面，托盘和热键只能靠 `--probe`（本地跑）和手工验收。
 
 ## 数据与配置
 
@@ -68,6 +81,7 @@ CI：`.github/workflows/windows.yml` 在 `windows-latest` 上 restore/build/test
 | 剪贴板图片 | `%LOCALAPPDATA%\Toolbox\media\<sha256>.png` |
 | AI Key | `%APPDATA%\Toolbox\ai.key`（DPAPI `CurrentUser` 加密，**不写 settings.json**） |
 | 日志 | `%LOCALAPPDATA%\Toolbox\logs\` |
+| `--probe` 报告 | `%LOCALAPPDATA%\Toolbox\probe.txt` |
 
 设置写入是「临时文件 + 原子替换」；JSON 解码失败时备份为 `settings.json.corrupt-<ts>` 再回落默认值。翻译设置里的未知引擎（例如 macOS 的 `apple`）回落为 `auto`，不会让整份配置失效。
 
@@ -173,10 +187,10 @@ Core 只放了与平台无关的几何：
 ## 待办（按依赖顺序）
 
 ### P0 骨架
-- [ ] `Toolbox.App`：WPF `WinExe`、单实例互斥、托盘图标（`Shell_NotifyIcon` P/Invoke）、托盘菜单、开机自启（HKCU Run）。
-- [ ] 隐藏消息窗：全局热键 `RegisterHotKey`、`WM_HOTKEY` 分发、热键冲突提示。
-- [ ] 设置窗口：通用/剪贴板/Hosts/截图/翻译五个页签；热键录制控件。
-- [ ] 日志与全局异常兜底（未处理异常写日志 + 托盘气泡）。
+- [x] `Toolbox.App`：WPF `WinExe`、单实例互斥、托盘图标（`Shell_NotifyIcon` P/Invoke）、托盘菜单、开机自启（HKCU Run）。
+- [x] 隐藏消息窗：全局热键 `RegisterHotKey`、`WM_HOTKEY` 分发、热键冲突提示。
+- [x] 设置窗口：通用页（热键录制 + 开机自启）为真功能，其余四页标注待实现阶段。
+- [x] 日志与全局异常兜底（未处理异常写日志 + 托盘气泡）。
 
 ### P1 剪贴板（1–2 周）
 - [ ] `ClipboardMonitor`（格式读取、来源进程、自己写入抑制）。
@@ -207,7 +221,8 @@ Core 只放了与平台无关的几何：
 ## 测试策略
 
 - Core 层继续用 xUnit；macOS 版 `Tests/ToolboxKitTests` 的 552 个用例是行为规格，按模块逐条移植，**不要只测新写的代码**。
-- 已移植 58 条：设置/热键、hosts 编译与冲突、剪贴板策略与 SQLite、翻译解析/网络策略/自动降级、截图几何。
+- 已移植 98 条：设置/热键、hosts 编译与冲突、剪贴板策略与 SQLite、翻译解析/网络策略/自动降级、截图几何，
+  以及 P0 新增的路径表、滚动日志、热键校验规则、托盘菜单契约。
 - UI 层无法在 CI 验证，每个模块附手工验收清单：
   - 剪贴板：文本/图片/多文件、置顶、搜索、粘贴到记事本/浏览器/终端、排除密码管理器。
   - 翻译：中英日互译、无选区、跨进程取词、引擎切换后旧结果不覆盖、AI 缺 Key 提示、代理开关。
@@ -222,11 +237,19 @@ Core 只放了与平台无关的几何：
 - **代理**：Google/AI 走 `127.0.0.1:10809`，需要用户已有本地代理；Windows 版代理模块尚未移植。
 - **截图**：`BitBlt` 对 HDR、DRM/受保护窗口支持差；WGC 方案需要额外处理光标与多显示器。
 - **签名**：未签名 exe 会被 SmartScreen/杀软拦截，正式分发前必须买证书。
+- **UI 自动化测不了**：CI 没有交互桌面，托盘图标和 `WM_HOTKEY` 只能在真机上验。所以提供了 `--probe`，
+  把"注册成功了没、为什么失败"落成文本，骨架部分可脚本化验收。
+- **开机自启只认 `HKCU\...\Run`**：任务管理器"启动"页禁用后会写 `StartupApproved\Run`，本版不读那个键，
+  表现为"注册表里有值、实际没随系统启动"。
+- **托盘菜单里未实现的模块是可点的**：点了会用气泡说明"将在 Pn 提供"，而不是静默无反应；
+  但菜单目前没有置灰，和 Mac 版"带版本号的置灰占位行"略有差别。
 - **UI 自动化**：部分应用（终端、游戏、自绘控件）不暴露 `TextPattern`，只能走 Ctrl+C 回退。
 
 ## 给接手的人：第一天
 
-1. 装 .NET 10 SDK，`cd windows && dotnet test Toolbox.slnx`，确认 58 个用例全绿。
+1. 装 .NET 10 SDK，`cd windows && dotnet test Toolbox.slnx`，确认 98 个用例全绿。
 2. 用 VS 2022 17.14+ / Rider 打开 `Toolbox.slnx`（`.slnx` 需要较新工具链；老版本可 `dotnet sln migrate` 或新建 `.sln`）。
-3. 先做 P0 骨架：托盘 + 单实例 + 热键 + 空设置窗，确保能常驻、能退出、能开机自启。
-4. 再按 P1→P4 顺序推进；每完成一个模块，把 macOS 对应测试用例补进 `Toolbox.Core.Tests`。
+3. 跑一次 `dotnet run --project src/Toolbox.App/Toolbox.App.csproj -- --probe`，确认 `RESULT ok`、
+   托盘和 4 个热键都正常；再双击 exe，确认托盘出图标、右键出菜单、设置窗能打开。
+4. 按 P1→P4 顺序推进；每完成一个模块，把 macOS 对应测试用例补进 `Toolbox.Core.Tests`，
+   并把托盘菜单里对应的那条从 `ReportPending` 换成真实现（动作表和菜单契约都已经就位）。
