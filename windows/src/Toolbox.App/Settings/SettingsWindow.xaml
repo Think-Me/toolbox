@@ -34,8 +34,9 @@
         </TabItem>
 
         <TabItem Header="剪贴板">
-            <local:PlaceholderTab Phase="P1"
-                                  Description="剪贴板历史：采集（文本 / 图片 / 多文件）、搜索、置顶、粘贴回目标窗口。" />
+            <!-- P1 已可用：面板 + 粘贴；这里只差配置项（容量 / 排除进程），补上后替换 -->
+            <local:PlaceholderTab Phase="后续版本"
+                                  Description="剪贴板历史已可用（Ctrl+Alt+V 呼出）。容量、排除进程等配置项待补。" />
         </TabItem>
 
         <TabItem Header="Hosts 规则">
@@ -49,8 +50,7 @@
         </TabItem>
 
         <TabItem Header="翻译">
-            <local:PlaceholderTab Phase="P2"
-                                  Description="划词取词、翻译浮窗、引擎切换、AI Key 存取。" />
+            <ContentControl x:Name="TranslationHost" />
         </TabItem>
     </TabControl>
 </Window>

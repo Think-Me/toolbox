@@ -1,0 +1,44 @@
+<UserControl x:Class="Toolbox.App.Settings.TranslationTab"
+             x:ClassModifier="internal"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="18,14">
+            <TextBlock Text="引擎" FontWeight="SemiBold" />
+            <ComboBox x:Name="EngineCombo" Width="280" HorizontalAlignment="Left" Margin="0,6,0,0" />
+
+            <TextBlock Text="目标语言" FontWeight="SemiBold" Margin="0,14,0,0" />
+            <ComboBox x:Name="LanguageCombo" Width="280" HorizontalAlignment="Left" Margin="0,6,0,0" />
+
+            <TextBlock Text="网络" FontWeight="SemiBold" Margin="0,14,0,0" />
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                <ComboBox x:Name="NetworkCombo" Width="160" VerticalContentAlignment="Center" />
+                <TextBlock Text="代理端口" Margin="16,0,8,0" VerticalAlignment="Center" Foreground="#777" />
+                <TextBox x:Name="ProxyPortBox" Width="70" VerticalContentAlignment="Center" />
+            </StackPanel>
+            <TextBlock Text="自动 = 只有需要翻墙的域名（Google / AI）走代理，有道、MyMemory 直连"
+                       Foreground="#999" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
+
+            <TextBlock Text="AI 引擎（OpenAI 兼容接口）" FontWeight="SemiBold" Margin="0,14,0,0" />
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                <TextBlock Text="接口地址" Width="70" VerticalAlignment="Center" Foreground="#777" />
+                <TextBox x:Name="AiBaseUrlBox" Width="320" VerticalContentAlignment="Center" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                <TextBlock Text="模型" Width="70" VerticalAlignment="Center" Foreground="#777" />
+                <TextBox x:Name="AiModelBox" Width="320" VerticalContentAlignment="Center" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                <TextBlock Text="API Key" Width="70" VerticalAlignment="Center" Foreground="#777" />
+                <PasswordBox x:Name="AiKeyBox" Width="320" />
+            </StackPanel>
+            <TextBlock Text="Key 用 DPAPI 加密后单独存放（ai.key），不写进 settings.json；留空表示不修改"
+                       Foreground="#999" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
+
+            <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+                <Button Content="保存" Click="OnSaveClick" Padding="20,5" />
+                <TextBlock x:Name="SaveStatus" Margin="12,0,0,0" VerticalAlignment="Center" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

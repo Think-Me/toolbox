@@ -27,7 +27,11 @@
             </Grid.RowDefinitions>
 
             <DockPanel Grid.Row="0" LastChildFill="False">
-                <TextBlock x:Name="EngineText" FontWeight="SemiBold" Foreground="#1E88E5" />
+                <ComboBox x:Name="EngineCombo"
+                          DockPanel.Dock="Left"
+                          Width="150"
+                          VerticalContentAlignment="Center"
+                          SelectionChanged="OnEngineChanged" />
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                     <Button x:Name="PinButton" Content="钉住" Click="OnPinClick"
                             Background="Transparent" BorderThickness="0" Cursor="Hand" Padding="6,0" />
@@ -59,10 +63,11 @@
                      MaxHeight="300"
                      VerticalScrollBarVisibility="Auto" />
 
-            <UniformGrid Grid.Row="3" Columns="3" Margin="0,10,0,0">
-                <Button Content="复制" Click="OnCopyClick" Padding="0,5" Margin="0,0,4,0" />
-                <Button Content="替换原文" Click="OnReplaceClick" Padding="0,5" Margin="4,0" />
-                <Button Content="重新翻译" Click="OnRetranslateClick" Padding="0,5" Margin="4,0,0,0" />
+            <UniformGrid Grid.Row="3" Columns="4" Margin="0,10,0,0">
+                <Button Content="复制" Click="OnCopyClick" Padding="0,5" Margin="0,0,3,0" />
+                <Button Content="朗读" Click="OnSpeakClick" Padding="0,5" Margin="3,0" />
+                <Button Content="替换原文" Click="OnReplaceClick" Padding="0,5" Margin="3,0" />
+                <Button Content="重新翻译" Click="OnRetranslateClick" Padding="0,5" Margin="3,0,0,0" />
             </UniformGrid>
         </Grid>
     </Border>

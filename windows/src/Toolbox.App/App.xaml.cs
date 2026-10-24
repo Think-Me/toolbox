@@ -1,5 +1,7 @@
 using System.IO;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using System.Windows;
 using System.Windows.Threading;
 using Toolbox.App.Actions;
@@ -289,29 +291,20 @@ public partial class App : Application
     {
         if (_translationController is null) return;
 
-        _translationPopup ??= new TranslationPopup(
-            _translationController,
-            () => SelectionReader.Read(MarkSelfWrite),
-            () => _pasteTarget,
-            ReportStatus);
+        _translationPopup ??= new TranslationPopup(_translationController, new TranslationContext
+        {
+            Settings = () => _settings.Translation,
+            ReadSelection = () => SelectionReader.Read(MarkSelfWrite),
+            PersistSettings = settings =>
+            {
+                _store?.Save(_settings);
+                _log?.Info("翻译设置已保存");
+            },
+            GetTargetWindow = () => _pasteTarget,
+            Report = ReportStatus,
+            MarkSelfWrite = MarkSelfWrite,
+        });
         _translationPopup.Toggle();
-    }
-
-    /// <summary>AI Key 用 DPAPI 保护，读不到（没存/坏文件）就按没有 Key 处理，AI 引擎会给出明确错误。</summary>
-    private static string? LoadAiKey(string file)
-    {
-        try
-        {
-            if (!File.Exists(file)) return null;
-            var encrypted = System.IO.File.ReadAllBytes(file);
-            var plain = System.Security.Cryptography.ProtectedData.Unprotect(
-                encrypted, null, System.Security.Cryptography.DataProtectionScope.CurrentUser);
-            return System.Text.Encoding.UTF8.GetString(plain);
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     private (PasteOutcome Outcome, string Message) PasteClipboardItem(ClipboardItem item)
@@ -419,12 +412,40 @@ public partial class App : Application
     private SettingsContext BuildContext() => new()
     {
         Paths = _paths,
+        Settings = _settings,
         Hotkeys = _hotkeyTable!,
         Failures = _hotkeys?.Failures ?? [],
         ProbeFree = gesture => _hotkeys?.Probe(gesture) ?? false,
         ApplyHotkeys = ApplyHotkeys,
+        SaveSettings = () => _store?.Save(_settings),
+        LoadAiKey = () => LoadAiKey(_paths.AiKeyFile) ?? "",
+        SaveAiKey = key => SaveAiKey(key),
         Log = message => _log?.Info(message),
     };
+
+    /// <summary>AI Key 用 DPAPI 保护，读不到（没存/坏文件）就按没有 Key 处理，AI 引擎会给出明确错误。</summary>
+    private static string? LoadAiKey(string file)
+    {
+        try
+        {
+            if (!File.Exists(file)) return null;
+            var encrypted = File.ReadAllBytes(file);
+            var plain = ProtectedData.Unprotect(encrypted, null, DataProtectionScope.CurrentUser);
+            return Encoding.UTF8.GetString(plain);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void SaveAiKey(string key)
+    {
+        // 调用方保证目录存在（AppPaths.EnsureDirectories 在启动时跑过）
+        var file = AppPaths.Standard().AiKeyFile;
+        var encrypted = ProtectedData.Protect(Encoding.UTF8.GetBytes(key), null, DataProtectionScope.CurrentUser);
+        File.WriteAllBytes(file, encrypted);
+    }
 
     /// <summary>绑定表已经改过之后再调用：写盘 → 全部重注册 → 返回失败项。</summary>
     private IReadOnlyList<HotkeyFailure> ApplyHotkeys()

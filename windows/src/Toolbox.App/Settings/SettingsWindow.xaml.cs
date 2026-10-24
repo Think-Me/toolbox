@@ -21,6 +21,13 @@ internal partial class SettingsWindow : Window
         _context = context;
         InitializeComponent();
 
+        TranslationHost.Content = new TranslationTab(
+            () => context.Settings.Translation,
+            () => context.SaveSettings(),
+            () => context.LoadAiKey(),
+            key => context.SaveAiKey(key),
+            message => context.Log(message));
+
         BuildHotkeyRows();
         ShowHotkeyFailures(context.Failures);
         LoadGeneralState();
