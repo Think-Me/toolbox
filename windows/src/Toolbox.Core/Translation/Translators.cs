@@ -9,6 +9,20 @@ public sealed class TranslationException(string message) : Exception(message);
 
 public sealed record TranslationResult(string Text, string? DetectedLanguage, TranslationEngine Engine);
 
+internal static class JsonElementExtensions
+{
+    /// <summary>
+    /// 引擎返回的数字字段有时是**字符串**（实测 MyMemory 的 responseStatus 会变成 "200"），
+    /// 直接 TryGetInt32 会抛 InvalidOperationException 并让整次翻译失败。
+    /// </summary>
+    public static int? ToInt32OrNull(this JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.Number => element.TryGetInt32(out var number) ? number : null,
+        JsonValueKind.String when int.TryParse(element.GetString(), out var number) => number,
+        _ => null,
+    };
+}
+
 public interface ITranslator
 {
     TranslationEngine Engine { get; }
@@ -167,7 +181,8 @@ public sealed class YoudaoTranslator(HttpClient client) : ITranslator
 
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
         var root = doc.RootElement;
-        if (root.TryGetProperty("errorCode", out var code) && code.TryGetInt32(out var errorCode) && errorCode != 0)
+        if (root.TryGetProperty("errorCode", out var code) &&
+            code.ToInt32OrNull() is { } errorCode && errorCode != 0)
             throw new TranslationException($"接口拒绝：错误码 {errorCode}");
         if (!root.TryGetProperty("translation", out var parts) || parts.ValueKind != JsonValueKind.Array)
             throw new TranslationException("接口返回了无法解析的数据");
@@ -207,7 +222,7 @@ public sealed class MyMemoryTranslator(HttpClient client) : ITranslator
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
         var root = doc.RootElement;
         if (root.TryGetProperty("responseStatus", out var status) &&
-            status.TryGetInt32(out var statusCode) && statusCode != 200)
+            status.ToInt32OrNull() is { } statusCode && statusCode != 200)
         {
             var detail = root.TryGetProperty("responseDetails", out var d) ? d.GetString() : null;
             throw new TranslationException($"接口拒绝：{detail ?? $"状态 {statusCode}"}");

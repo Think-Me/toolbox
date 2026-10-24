@@ -72,6 +72,7 @@ internal static class NativeMethods
     public const uint KeyeventfKeyUp = 0x0002;
     public const ushort VkControl = 0x11;
     public const ushort VkV = 0x56;
+    public const ushort VkC = 0x43;
 
     /// <summary>v4 语义下的通知码（lParam 低字）。</summary>
     public const int NinSelect = 0x0400;

@@ -1,0 +1,69 @@
+<Window x:Class="Toolbox.App.Translation.TranslationPopup"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:ClassModifier="internal"
+        Title="划词翻译"
+        Width="360"
+        SizeToContent="Height"
+        MaxHeight="480"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        Topmost="True"
+        ResizeMode="NoResize"
+        WindowStartupLocation="Manual">
+    <Border Background="#FFFFFF" CornerRadius="8" BorderBrush="#22000000" BorderThickness="1" Padding="12,10">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="16" ShadowDepth="2" Opacity="0.22" />
+        </Border.Effect>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <DockPanel Grid.Row="0" LastChildFill="False">
+                <TextBlock x:Name="EngineText" FontWeight="SemiBold" Foreground="#1E88E5" />
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="PinButton" Content="钉住" Click="OnPinClick"
+                            Background="Transparent" BorderThickness="0" Cursor="Hand" Padding="6,0" />
+                    <Button Content="×" Click="OnCloseClick"
+                            Background="Transparent" BorderThickness="0" Cursor="Hand"
+                            FontWeight="Bold" Padding="6,0" />
+                </StackPanel>
+            </DockPanel>
+
+            <TextBlock x:Name="SourceText"
+                       Grid.Row="1"
+                       Margin="0,8,0,0"
+                       Foreground="#999"
+                       FontSize="12"
+                       MaxHeight="54"
+                       TextWrapping="Wrap"
+                       TextTrimming="CharacterEllipsis" />
+
+            <!-- 用只读 TextBox 而不是 TextBlock：译文要能选中复制，
+                 而 IsTextSelectionEnabled 在 net10.0-windows（不带版本号）的引用程序集里没有 -->
+            <TextBox x:Name="ResultText"
+                     Grid.Row="2"
+                     Margin="0,8,0,0"
+                     FontSize="15"
+                     IsReadOnly="True"
+                     BorderThickness="0"
+                     Background="Transparent"
+                     TextWrapping="Wrap"
+                     MaxHeight="300"
+                     VerticalScrollBarVisibility="Auto" />
+
+            <UniformGrid Grid.Row="3" Columns="3" Margin="0,10,0,0">
+                <Button Content="复制" Click="OnCopyClick" Padding="0,5" Margin="0,0,4,0" />
+                <Button Content="替换原文" Click="OnReplaceClick" Padding="0,5" Margin="4,0" />
+                <Button Content="重新翻译" Click="OnRetranslateClick" Padding="0,5" Margin="4,0,0,0" />
+            </UniformGrid>
+        </Grid>
+    </Border>
+</Window>

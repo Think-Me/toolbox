@@ -94,6 +94,21 @@ public sealed class TranslationTests
             translator.TranslateAsync("hi", null, "zh-Hans", default));
     }
 
+    /// <summary>实测接口有时把数字字段发成字符串，类型差异不能让整次翻译失败。</summary>
+    [Fact]
+    public async Task EnginesTolerateNumericFieldsSentAsStrings()
+    {
+        var youdao = new YoudaoTranslator(Client(new StubHandler((_, _) =>
+            Json("""{"errorCode":"0","translation":["你好世界"],"l":"en2zh-CHS"}"""))));
+        var youdaoResult = await youdao.TranslateAsync("hello", null, "zh-Hans", default);
+        Assert.Equal("你好世界", youdaoResult.Text);
+
+        var myMemory = new MyMemoryTranslator(Client(new StubHandler((_, _) =>
+            Json("""{"responseStatus":"200","responseData":{"translatedText":"你好世界"}}"""))));
+        var myMemoryResult = await myMemory.TranslateAsync("hello", null, "zh-Hans", default);
+        Assert.Equal("你好世界", myMemoryResult.Text);
+    }
+
     [Fact]
     public async Task MyMemoryUsesGuessedSourceAndDecodesEntities()
     {

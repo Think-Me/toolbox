@@ -1,3 +1,5 @@
+using System.IO;
+using System.Net.Http;
 using System.Windows;
 using System.Windows.Threading;
 using Toolbox.App.Actions;
@@ -6,10 +8,12 @@ using Toolbox.App.Diagnostics;
 using Toolbox.App.Hotkeys;
 using Toolbox.App.Settings;
 using Toolbox.App.Shell;
+using Toolbox.App.Translation;
 using Toolbox.Core.Clipboard;
 using Toolbox.Core.Infrastructure;
 using Toolbox.Core.Settings;
 using Toolbox.Core.Shell;
+using Toolbox.Core.Translation;
 
 namespace Toolbox.App;
 
@@ -32,6 +36,8 @@ public partial class App : Application
     private ClipboardStore? _clipboardStore;
     private ClipboardMonitor? _monitor;
     private ClipboardPanelWindow? _clipboardPanel;
+    private TranslationController? _translationController;
+    private TranslationPopup? _translationPopup;
     private DispatcherTimer? _clipboardCoalesce;
 
     /// <summary>呼出面板之前的前台窗口，粘贴要打回这里。</summary>
@@ -39,6 +45,7 @@ public partial class App : Application
 
     private bool _probeMode;
     private bool _pasteProbeMode;
+    private bool _translateProbeMode;
     private bool _reportingCrash;
     private bool _recording = true;
 
@@ -47,6 +54,7 @@ public partial class App : Application
         base.OnStartup(e);
         _probeMode = e.Args.Contains("--probe");
         _pasteProbeMode = e.Args.Contains("--paste-probe");
+        _translateProbeMode = e.Args.Contains("--translate-probe");
 
         _paths.EnsureDirectories();
         _log = new RollingFileLogger(_paths.LogsDirectory);
@@ -89,6 +97,9 @@ public partial class App : Application
         _hotkeys = new HotkeyService(_sink.Handle);
         _hotkeyTable = HotkeyRegistrationTable.From(_settings.Hotkeys);
         _actions = BuildActions();
+        _translationController = new TranslationController(
+            () => _settings.Translation,
+            LoadAiKey(_paths.AiKeyFile));
 
         var failures = _hotkeys.RegisterAll(_hotkeyTable);
         ReportHotkeyFailures(failures);
@@ -99,7 +110,7 @@ public partial class App : Application
         if (orphaned > 0) _log?.Info($"清理孤立媒体文件 {orphaned} 个");
         _sink.ClipboardUpdated = OnClipboardUpdated;
         if (!NativeMethods.AddClipboardFormatListener(_sink.Handle))
-            _log.Error("注册剪贴板监听失败，历史采集不可用");
+            _log?.Error("注册剪贴板监听失败，历史采集不可用");
 
         // 粘贴链路的确定性自检：绕开托盘/热键，直接驱动 ClipboardPaste。
         // 必须在没有别的实例运行时做（单实例守卫在上面的分支里）。
@@ -109,13 +120,20 @@ public partial class App : Application
             return;
         }
 
+        // 翻译链路自检：打真实引擎接口，把原始响应体落进报告，用于解析层调试。
+        if (_translateProbeMode)
+        {
+            RunTranslateProbe();
+            return;
+        }
+
         if (_probeMode)
         {
             FinishProbe(trayInstalled, failures);
             return;
         }
 
-        _log.Info($"骨架就绪：托盘={trayInstalled} 热键 {TotalHotkeys - failures.Count}/{TotalHotkeys}");
+        _log?.Info($"骨架就绪：托盘={trayInstalled} 热键 {TotalHotkeys - failures.Count}/{TotalHotkeys}");
     }
 
     private static int TotalHotkeys => Enum.GetValues<HotkeyId>().Length;
@@ -174,6 +192,63 @@ public partial class App : Application
         Shutdown(_probe.Ok ? 0 : 1);
     }
 
+    /// <summary>
+    /// 翻译链路自检：直接打有道 / MyMemory 的真实接口，把**原始响应体**写进报告。
+    /// 引擎解析挂了的时候，没有原始响应根本没法修 —— 这里就是为了拿到它。
+    /// </summary>
+    private void RunTranslateProbe()
+    {
+        var text = "hello world";
+
+        // OnStartup 在 UI 线程上：HTTP 续体会回到 Dispatcher，直接 GetResult() 就是死锁。
+        // Task.Run 把续体扔到线程池，彻底脱离 UI 上下文。
+        var (youdaoStatus, youdaoBody) = Task.Run(() => ProbeHttp(() =>
+        {
+            using var client = new HttpClient();
+            var form = new Dictionary<string, string> { ["q"] = text, ["from"] = "auto", ["to"] = "zh-CHS" };
+            using var response = client.PostAsync("https://aidemo.youdao.com/trans",
+                new System.Net.Http.FormUrlEncodedContent(form)).GetAwaiter().GetResult();
+            return (response.StatusCode, response.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+        })).GetAwaiter().GetResult();
+        _probe.Line($"youdao.status={youdaoStatus}");
+        _probe.Line($"youdao.body={TruncateForProbe(youdaoBody)}");
+
+        var (myMemoryStatus, myMemoryBody) = Task.Run(() => ProbeHttp(() =>
+        {
+            using var client = new HttpClient();
+            var url = "https://api.mymemory.translated.net/get?q=hello%20world&langpair=en%7Czh-CN";
+            using var response = client.GetAsync(url).GetAwaiter().GetResult();
+            return (response.StatusCode, response.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+        })).GetAwaiter().GetResult();
+        _probe.Line($"mymemory.status={myMemoryStatus}");
+        _probe.Line($"mymemory.body={TruncateForProbe(myMemoryBody)}");
+
+        try
+        {
+            var result = Task.Run(() => new TranslationService().TranslateAsync(
+                text, null, _settings.Translation, CancellationToken.None)).GetAwaiter().GetResult();
+            _probe.Line($"translate.result=[{result.Engine.ShortLabel()}] {result.Text}");
+        }
+        catch (Exception error)
+        {
+            _probe.Fail($"translate failed: {error.GetType().Name}: {error.Message}");
+        }
+
+        _probe.Write(_paths.ProbeReport);
+        _log?.Info($"translate-probe 完成 ok={_probe.Ok}");
+        Shutdown(_probe.Ok ? 0 : 1);
+    }
+
+    private static (System.Net.HttpStatusCode Status, string Body) ProbeHttp(
+        Func<(System.Net.HttpStatusCode, string)> request)
+    {
+        try { return request(); }
+        catch (Exception error) { return (0, $"{error.GetType().Name}: {error.Message}"); }
+    }
+
+    private static string TruncateForProbe(string body) =>
+        body.Length <= 600 ? body : body[..600] + "…(截断)";
+
     /// <summary>explorer 崩溃重启会清掉所有托盘图标，只能重新挂一次。</summary>
     private void OnTaskbarCreated()
     {
@@ -190,8 +265,9 @@ public partial class App : Application
         var action = AppActionTable.ForHotkey(hotkeyId);
         _log?.Info($"热键 {HotkeyRegistrationTable.DisplayName(hotkeyId)} → {action}");
 
-        // 热键不改变前台窗口，此刻的前台就是用户想粘贴回去的地方
-        if (action == TrayAction.Clipboard) _pasteTarget = NativeMethods.GetForegroundWindow();
+        // 热键不改变前台窗口，此刻的前台就是用户想粘贴回去 / 替换原文的地方
+        if (action is TrayAction.Clipboard or TrayAction.Translate)
+            _pasteTarget = NativeMethods.GetForegroundWindow();
 
         _actions?.Invoke(action);
         return true;
@@ -203,6 +279,39 @@ public partial class App : Application
 
         _clipboardPanel ??= new ClipboardPanelWindow(_clipboardStore, PasteClipboardItem, ReportStatus);
         _clipboardPanel.ShowPanel();
+    }
+
+    /// <summary>自己往剪贴板写了东西（粘贴、采集回退的恢复）都要打标记，否则会被自己的监听再采一遍。</summary>
+    private void MarkSelfWrite() => _monitor?.MarkSelfWrite();
+
+    /// <summary>划词翻译：读选区（读不到时气泡提示），弹浮窗并异步翻译。</summary>
+    private void ShowTranslation()
+    {
+        if (_translationController is null) return;
+
+        _translationPopup ??= new TranslationPopup(
+            _translationController,
+            () => SelectionReader.Read(MarkSelfWrite),
+            () => _pasteTarget,
+            ReportStatus);
+        _translationPopup.Toggle();
+    }
+
+    /// <summary>AI Key 用 DPAPI 保护，读不到（没存/坏文件）就按没有 Key 处理，AI 引擎会给出明确错误。</summary>
+    private static string? LoadAiKey(string file)
+    {
+        try
+        {
+            if (!File.Exists(file)) return null;
+            var encrypted = System.IO.File.ReadAllBytes(file);
+            var plain = System.Security.Cryptography.ProtectedData.Unprotect(
+                encrypted, null, System.Security.Cryptography.DataProtectionScope.CurrentUser);
+            return System.Text.Encoding.UTF8.GetString(plain);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private (PasteOutcome Outcome, string Message) PasteClipboardItem(ClipboardItem item)
@@ -244,11 +353,11 @@ public partial class App : Application
         table.Bind(TrayAction.TogglePause, _ => ToggleRecording());
         table.Bind(TrayAction.ToggleLoginItem, _ => ToggleLoginItem());
         table.Bind(TrayAction.Clipboard, _ => ShowClipboardPanel());
+        table.Bind(TrayAction.Translate, _ => ShowTranslation());
 
         // 还没做的模块：菜单照常可点，点了明确告诉用户什么时候会有，而不是静默无反应。
         TrayAction[] pending =
         [
-            TrayAction.Translate,
             TrayAction.HostsPanel,
             TrayAction.HostsManagementToggle,
             TrayAction.HostsRuleToggle,
@@ -268,8 +377,6 @@ public partial class App : Application
 
     private static (string Name, string Phase) Pending(TrayAction action) => action switch
     {
-        TrayAction.Clipboard => ("剪贴板历史", "P1"),
-        TrayAction.Translate => ("划词翻译", "P2"),
         TrayAction.HostsPanel or TrayAction.HostsRuleToggle or TrayAction.HostsManagementToggle =>
             ("Hosts 规则", "P3"),
         TrayAction.CaptureRegion => ("区域截图", "P4"),

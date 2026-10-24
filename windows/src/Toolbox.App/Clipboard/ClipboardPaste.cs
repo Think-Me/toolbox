@@ -62,6 +62,24 @@ internal static class ClipboardPaste
         _ => false,
     };
 
+    /// <summary>带重试地写一段文本进剪贴板。给翻译的「复制译文 / 恢复原剪贴板」复用。</summary>
+    internal static bool WriteText(string text)
+    {
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            try
+            {
+                System.Windows.Clipboard.SetText(text);
+                return true;
+            }
+            catch (Exception error) when (error is COMException or ExternalException)
+            {
+                Thread.Sleep(40);
+            }
+        }
+        return false;
+    }
+
     /// <summary>
     /// 剪贴板经常被别的程序占着（这台机器上实测连 Set-Clipboard 都会失败），必须重试。
     /// **最后一次失败也要吞掉**并返回 false —— 如果让 COMException 飞出去，
@@ -123,14 +141,15 @@ internal static class ClipboardPaste
         return false;
     }
 
-    private static (bool Ok, string Detail) SendCtrlV()
+    /// <summary>发一个组合键：修饰键按住 → 主键按下抬起 → 修饰键抬起。Ctrl+C 采集回退和 Ctrl+V 粘贴共用。</summary>
+    internal static (bool Ok, string Detail) SendCombo(ushort modifier, ushort key)
     {
         var inputs = new NativeMethods.Input[]
         {
-            Key(NativeMethods.VkControl, up: false),
-            Key(NativeMethods.VkV, up: false),
-            Key(NativeMethods.VkV, up: true),
-            Key(NativeMethods.VkControl, up: true),
+            Key(modifier, up: false),
+            Key(key, up: false),
+            Key(key, up: true),
+            Key(modifier, up: true),
         };
 
         var sent = NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeMethods.Input>());
@@ -138,6 +157,8 @@ internal static class ClipboardPaste
             ? (true, "")
             : (false, $"{sent}/{inputs.Length}，Win32 错误 {Marshal.GetLastWin32Error()}");
     }
+
+    private static (bool Ok, string Detail) SendCtrlV() => SendCombo(NativeMethods.VkControl, NativeMethods.VkV);
 
     private static NativeMethods.Input Key(ushort virtualKey, bool up) => new()
     {
