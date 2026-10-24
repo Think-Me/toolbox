@@ -4,8 +4,11 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Windows;
 using System.Windows.Threading;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using Toolbox.App.Actions;
 using Toolbox.App.Clipboard;
+using Toolbox.App.Capture;
 using Toolbox.App.Diagnostics;
 using Toolbox.App.Hotkeys;
 using Toolbox.App.Hosts;
@@ -53,6 +56,7 @@ public partial class App : Application
     private bool _probeMode;
     private bool _pasteProbeMode;
     private bool _translateProbeMode;
+    private bool _captureProbeMode;
     private bool _reportingCrash;
     private bool _recording = true;
 
@@ -62,6 +66,7 @@ public partial class App : Application
         _probeMode = e.Args.Contains("--probe");
         _pasteProbeMode = e.Args.Contains("--paste-probe");
         _translateProbeMode = e.Args.Contains("--translate-probe");
+        _captureProbeMode = e.Args.Contains("--capture-probe");
 
         _paths.EnsureDirectories();
         _log = new RollingFileLogger(_paths.LogsDirectory);
@@ -135,6 +140,13 @@ public partial class App : Application
         if (_translateProbeMode)
         {
             RunTranslateProbe();
+            return;
+        }
+
+        // 抓屏自检：BitBlt + 裁剪 + PNG 编码，产物落盘供人工核对。
+        if (_captureProbeMode)
+        {
+            RunCaptureProbe();
             return;
         }
 
@@ -260,6 +272,61 @@ public partial class App : Application
     private static string TruncateForProbe(string body) =>
         body.Length <= 600 ? body : body[..600] + "…(截断)";
 
+    /// <summary>
+    /// 抓屏自检：BitBlt 抓光标所在显示器 -> 裁一块 200x150 -> 分别编码 PNG 落盘。
+    /// 遮罩窗的交互没法被自动化驱动（分层窗口枚举不到、整屏截图又会遮掉普通窗口），
+    /// 所以抓屏/裁剪这条底层链路用确定性产物验证，选区交互靠人工验收。
+    /// </summary>
+    private void RunCaptureProbe()
+    {
+        var capture = Capture.CaptureService.CaptureCursorMonitor();
+        if (capture is null)
+        {
+            _probe.Fail("抓屏返回空");
+            _probe.Write(_paths.ProbeReport);
+            Shutdown(1);
+            return;
+        }
+
+        _probe.Line($"capture.size={capture.PixelWidth}x{capture.PixelHeight}");
+        _probe.Line($"capture.dpiScale={capture.DpiScale:0.00}");
+        _probe.Line($"capture.monitor=({capture.MonitorPixels.Left},{capture.MonitorPixels.Top})-({capture.MonitorPixels.Right},{capture.MonitorPixels.Bottom})");
+
+        var full = Path.Combine(_paths.LocalRoot, "capture-probe-full.png");
+        SavePng(capture.Image, full);
+        _probe.Line($"capture.full={(File.Exists(full) ? new FileInfo(full).Length : -1)} {full}");
+
+        var croppedPng = Capture.CaptureService.ToPng(capture.Image, 10, 10, 200, 150);
+        var cropped = Path.Combine(_paths.LocalRoot, "capture-probe-cropped.png");
+        File.WriteAllBytes(cropped, croppedPng);
+        _probe.Line($"capture.cropped={croppedPng.Length} {cropped}");
+
+        // 裁剪尺寸必须严格等于请求值，多一像素少一像素都是坐标系换算错了
+        if (croppedPng.Length <= 0) _probe.Fail("裁剪 PNG 为空");
+        try
+        {
+            var decoded = BitmapFrame.Create(new MemoryStream(File.ReadAllBytes(cropped)));
+            if (decoded.PixelWidth != 200 || decoded.PixelHeight != 150)
+                _probe.Fail($"裁剪尺寸 {decoded.PixelWidth}x{decoded.PixelHeight}，期望 200x150");
+        }
+        catch (Exception error)
+        {
+            _probe.Fail("裁剪 PNG 解码失败：" + error.Message);
+        }
+
+        _probe.Write(_paths.ProbeReport);
+        _log?.Info($"capture-probe 完成 ok={_probe.Ok}");
+        Shutdown(_probe.Ok ? 0 : 1);
+    }
+
+    private static void SavePng(BitmapSource source, string path)
+    {
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(source));
+        using var stream = File.Create(path);
+        encoder.Save(stream);
+    }
+
     /// <summary>explorer 崩溃重启会清掉所有托盘图标，只能重新挂一次。</summary>
     private void OnTaskbarCreated()
     {
@@ -282,6 +349,32 @@ public partial class App : Application
 
         _actions?.Invoke(action);
         return true;
+    }
+
+    /// <summary>区域截图：先冻结屏幕，再盖遮罩窗划选区。</summary>
+    private void StartCapture()
+    {
+        _log?.Info("截图：开始抓屏");
+        var capture = CaptureService.CaptureCursorMonitor();
+        if (capture is null)
+        {
+            _log?.Info("截图：抓屏返回空");
+            ReportStatus("抓屏失败");
+            return;
+        }
+        _log?.Info($"截图：{capture.PixelWidth}×{capture.PixelHeight} dpiScale={capture.DpiScale:0.00}");
+
+        var overlay = new CaptureOverlay(
+            capture,
+            cropped => System.Windows.Clipboard.SetImage(cropped),
+            (cropped, bounds) =>
+            {
+                new PinWindow(cropped, bounds).Show();
+                _log?.Info($"贴图 {bounds.Width:0}×{bounds.Height:0}");
+            },
+            ReportStatus);
+        overlay.Show();
+        _log?.Info($"截图：遮罩窗已显示 visible={overlay.IsVisible}");
     }
 
     private void ShowClipboardPanel()
@@ -359,22 +452,9 @@ public partial class App : Application
         table.Bind(TrayAction.HostsPanel, _ => ShowSettings());
         table.Bind(TrayAction.HostsManagementToggle, _ => ToggleHostsManagement());
         table.Bind(TrayAction.HostsRuleToggle, ruleId => ToggleHostsRule(ruleId));
-
-        // 还没做的模块：菜单照常可点，点了明确告诉用户什么时候会有，而不是静默无反应。
-        TrayAction[] pending =
-        [
-            TrayAction.CaptureRegion,
-        ];
-        foreach (var action in pending) table.Bind(action, _ => ReportPending(action));
+        table.Bind(TrayAction.CaptureRegion, _ => StartCapture());
 
         return table;
-    }
-
-    private void ReportPending(TrayAction action)
-    {
-        var (name, phase) = Pending(action);
-        _log?.Info($"{name} 尚未实现（{phase}）");
-        _tray?.ShowBalloon(name, $"这个功能将在 {phase} 提供。");
     }
 
     /// <summary>托盘子菜单要显示的真实规则快照，每次开菜单重新取。</summary>
@@ -447,12 +527,6 @@ public partial class App : Application
             }
         });
     }
-
-    private static (string Name, string Phase) Pending(TrayAction action) => action switch
-    {
-        TrayAction.CaptureRegion => ("区域截图", "P4"),
-        _ => ("该功能", "后续版本"),
-    };
 
     private void ToggleRecording()
     {
