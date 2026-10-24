@@ -133,7 +133,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var translateReader = SelectionReader(tracker: selfWrites)
     lazy var translationPanel = TranslationPanelController(
         settings: { [weak self] in self?.model.settings.translation ?? TranslationSettings() },
-        reader: translateReader)
+        reader: translateReader,
+        engineDidChange: { [weak self] engine in
+            self?.model.mutateTranslationSettings { $0.engine = engine }
+        })
 
     // MARK: Hosts 模块
     lazy var hostsStore = HostsStore(file: paths.hostsRules)
@@ -627,6 +630,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 translationPanel.present(text: text)
                 return
             }
+            if CommandLine.arguments.contains("--pin-probe") {
+                translationPanel.present(text: "pin probe text")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    let p = PanelPresenter.shared
+                    p.setPinned(true)
+                    log("PINPROBE pinned=\(p.isPinned) monitor=\(p.outsideMonitorInstalled) showing=\(p.isShowing)\n")
+                    p.handleOutsideClick()
+                    log("PINPROBE afterOutsidePinned showing=\(p.isShowing)\n")
+                    p.setPinned(false)
+                    log("PINPROBE unpinned monitor=\(p.outsideMonitorInstalled) showing=\(p.isShowing)\n")
+                    p.handleOutsideClick()
+                    log("PINPROBE afterOutsideUnpinned showing=\(p.isShowing)\n")
+                    NSApp.terminate(nil)
+                }
+                return
+            }
             if CommandLine.arguments.contains("--translate-preview") {
                 self.showSettings(initialTab: 5)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
@@ -696,7 +715,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                              "--grant-screen", "--capture-probe", "--pin-demo",
                              "--hosts-e2e", "--menu-probe", "--paste-probe",
                              "--overlay-preview", "--clip-preview", "--text-probe", "--proxy-preview", "--update-preview", "--app-update-install-probe", "--proxy-run-probe", "--update-run-probe", "--rules-update-probe", "--app-update-probe",
-                             "--translate-probe", "--translate-preview", "--translate-panel-preview"]
+                             "--translate-probe", "--translate-preview", "--translate-panel-preview",
+                             "--pin-probe"]
     /// 实验：策略在 finishLaunching 之后再改可能完不成激活握手，
     /// 所以 --regular-mode 在 app.run() 之前就把策略定成 .regular。
     static var earlyRegular: Bool { CommandLine.arguments.contains("--regular-mode") }

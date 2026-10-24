@@ -18,6 +18,7 @@ public struct TranslationPanelView: View {
     @ObservedObject private var model: TranslationModel
     private let canReplace: Bool
     private let onReplace: () -> Void
+    @State private var pinned = false
 
     public init(model: TranslationModel, canReplace: Bool, onReplace: @escaping () -> Void) {
         self.model = model
@@ -51,12 +52,8 @@ public struct TranslationPanelView: View {
         HStack(spacing: 6) {
             Image(systemName: "character.book.closed")
             Text("翻译").font(.headline)
-            if !model.engineLabel.isEmpty {
-                Text(model.engineLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
+            engineMenu
+            Spacer(minLength: 4)
             Text(TranslationLanguages.label(for: model.targetLanguage))
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -67,9 +64,47 @@ public struct TranslationPanelView: View {
             }
             .buttonStyle(.borderless)
             .help("重新翻译")
+            Button {
+                pinned.toggle()
+                PanelPresenter.shared.setPinned(pinned)
+            } label: {
+                Image(systemName: pinned ? "pin.fill" : "pin")
+            }
+            .buttonStyle(.borderless)
+            .help(pinned ? "取消钉住" : "钉住（点击外部不关闭）")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    /// 浮窗内直接换引擎：只影响本次并回写设置，下次呼出沿用。
+    private var engineMenu: some View {
+        Menu {
+            ForEach(TranslationEngine.allCases, id: \.self) { engine in
+                Button {
+                    model.setEngine(engine)
+                } label: {
+                    if model.engine == engine {
+                        Label(engine.label, systemImage: "checkmark")
+                    } else {
+                        Text(engine.label)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 2) {
+                Text(model.engineLabel.isEmpty ? model.engine.shortLabel : model.engineLabel)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8))
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("翻译引擎")
     }
 
     private var sourceSection: some View {
@@ -164,16 +199,17 @@ private struct AppleTaskHost: View {
             // `.id` 换新 = 重新挂载 modifier：同一语言对连点"重译"也会再次触发
             .id(model.appleRequestID)
             .translationTask(model.appleConfiguration as? TranslationSession.Configuration) { @MainActor session in
+                let serial = await MainActor.run { model.appleRequestID }
                 guard let text = await MainActor.run(body: { model.applePendingText }) else { return }
                 do {
                     let response = try await session.translate(text)
                     let source = response.sourceLanguage.languageCode?.identifier
                     await MainActor.run {
-                        model.applyApple(response.targetText, sourceLanguage: source)
+                        model.applyApple(response.targetText, sourceLanguage: source, serial: serial)
                     }
                 } catch {
                     let message = error.localizedDescription
-                    await MainActor.run { model.failApple(message) }
+                    await MainActor.run { model.failApple(message, serial: serial) }
                 }
             }
     }

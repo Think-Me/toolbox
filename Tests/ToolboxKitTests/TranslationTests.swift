@@ -265,3 +265,53 @@ private final class FakeKeys: CommandKeySending {
     #expect(pasted)
     #expect(pb.string(forType: .string) == "回退译文")
 }
+
+@Test @MainActor func switchingEngineInvalidatesPendingAppleRequest() async {
+    var settings = TranslationSettings(engine: .apple)
+    var saved: TranslationEngine?
+    let model = TranslationModel(settings: { settings }, aiKey: { nil },
+                                 engineDidChange: { engine in
+                                     saved = engine
+                                     settings.engine = engine
+                                 })
+    model.begin(text: "hello")
+    for _ in 0..<50 {
+        if model.appleConfiguration != nil { break }
+        await Task.yield()
+    }
+    #expect(model.engine == .apple)
+    #expect(model.engineLabel == "Apple")
+    #expect(model.applePendingText == "hello")
+    #expect(model.appleConfiguration != nil)
+
+    model.setEngine(.ai)
+    #expect(saved == .ai)
+    #expect(settings.engine == .ai)          // 回写设置，下次呼出沿用
+    #expect(model.engine == .ai)
+    #expect(model.applePendingText == nil)   // 旧 Apple 请求必须作废
+    #expect(model.appleConfiguration == nil)
+    #expect(model.engineLabel == "AI")
+
+    for _ in 0..<50 {
+        if !model.isWorking { break }
+        await Task.yield()
+    }
+    #expect(model.output == nil)             // 不会残留上一次 Apple 译文
+    #expect(model.errorMessage != nil)       // AI 没 Key，直接报错
+}
+
+@Test @MainActor func staleAppleResultCannotOverwriteNewerRequest() async {
+    let settings = TranslationSettings(engine: .apple)
+    let model = TranslationModel(settings: { settings }, aiKey: { nil })
+    model.begin(text: "hello")
+    for _ in 0..<50 {
+        if model.appleConfiguration != nil { break }
+        await Task.yield()
+    }
+    let staleSerial = model.appleRequestID
+
+    model.setEngine(.ai)
+    model.applyApple("旧译文", sourceLanguage: "en", serial: staleSerial)
+    #expect(model.output == nil)
+    #expect(model.engineLabel == "AI")
+}

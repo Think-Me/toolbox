@@ -22,9 +22,11 @@ public final class TranslationPanelController {
 
     public init(settings: @escaping () -> TranslationSettings,
                 reader: SelectionReader,
-                aiKey: @escaping () -> String? = { KeychainStore.aiKey }) {
+                aiKey: @escaping () -> String? = { KeychainStore.aiKey },
+                engineDidChange: ((TranslationEngine) -> Void)? = nil) {
         self.reader = reader
-        self.model = TranslationModel(settings: settings, aiKey: aiKey)
+        self.model = TranslationModel(settings: settings, aiKey: aiKey,
+                                      engineDidChange: engineDidChange)
     }
 
     /// 测试与设置页可能要看状态

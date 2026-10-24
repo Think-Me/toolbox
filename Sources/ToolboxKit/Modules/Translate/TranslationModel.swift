@@ -18,6 +18,8 @@ public final class TranslationModel: ObservableObject {
     @Published public private(set) var isWorking = false
     @Published public private(set) var errorMessage: String?
     @Published public private(set) var engineLabel = ""
+    /// 本次会话实际使用的引擎。浮窗里切换引擎只改这一份，并回写设置。
+    @Published public private(set) var engine: TranslationEngine = .auto
     @Published public private(set) var targetLanguage = "zh-Hans"
     @Published public private(set) var copied = false
 
@@ -30,13 +32,16 @@ public final class TranslationModel: ObservableObject {
 
     private let settings: () -> TranslationSettings
     private let aiKey: () -> String?
+    private let engineDidChange: ((TranslationEngine) -> Void)?
     private var task: Task<Void, Never>?
     private let speech = AVSpeechSynthesizer()
 
     public init(settings: @escaping () -> TranslationSettings,
-                aiKey: @escaping () -> String? = { KeychainStore.aiKey }) {
+                aiKey: @escaping () -> String? = { KeychainStore.aiKey },
+                engineDidChange: ((TranslationEngine) -> Void)? = nil) {
         self.settings = settings
         self.aiKey = aiKey
+        self.engineDidChange = engineDidChange
     }
 
     // MARK: 入口
@@ -44,7 +49,16 @@ public final class TranslationModel: ObservableObject {
     public func begin(text: String) {
         let clipped = String(text.prefix(Self.maxCharacters))
         sourceText = clipped
+        engine = settings().engine
         copied = false
+        retranslate()
+    }
+
+    /// 浮窗里换引擎：立刻用新引擎重译，并回写设置（下次呼出沿用）。
+    public func setEngine(_ newEngine: TranslationEngine) {
+        guard engine != newEngine else { return }
+        engine = newEngine
+        engineDidChange?(newEngine)
         retranslate()
     }
 
@@ -55,26 +69,34 @@ public final class TranslationModel: ObservableObject {
             return
         }
         task?.cancel()
+        // 上一次 Apple 请求的配置/文本必须作废：浮窗每次重新挂载都会重放
+        // `.translationTask`，不清掉就会先显示上次的译文，甚至覆盖本次结果。
+        appleRequestID += 1
+        appleConfiguration = nil
+        applePendingText = nil
         output = nil
         errorMessage = nil
         detectedLanguage = nil
         copied = false
         isWorking = true
         let s = settings()
+        let chosen = engine
         targetLanguage = s.targetLanguage
+        engineLabel = chosen.shortLabel
         task = Task { @MainActor [weak self] in
-            await self?.perform(text, s)
+            await self?.perform(text, s, chosen)
         }
     }
 
-    private func perform(_ text: String, _ s: TranslationSettings) async {
+    private func perform(_ text: String, _ s: TranslationSettings,
+                         _ chosen: TranslationEngine) async {
         // 本地先猜一下源语言：既用来避开"英→英"，也给 Apple 一个明确的 source。
         // Apple 的 source=nil（自动识别）在短句上会报 "could not be automatically detected"。
         let source = TranslationLanguages.guessSource(text)
         let target = TranslationLanguages.effectiveTarget(source: source, target: s.targetLanguage)
         targetLanguage = target
         var engines: [TranslationEngine]
-        switch s.engine {
+        switch chosen {
         case .auto:
             if await AppleTranslationAvailability.supports(source: source, target: target) {
                 startApple(text: text, source: source, target: target)
@@ -86,7 +108,7 @@ public final class TranslationModel: ObservableObject {
             startApple(text: text, source: source, target: target)
             return
         default:
-            engines = [s.engine]
+            engines = [chosen]
         }
 
         var lastError: Error = TranslationError.message("没有可用的翻译引擎")
@@ -94,7 +116,7 @@ public final class TranslationModel: ObservableObject {
             if Task.isCancelled { return }
             guard let translator = TranslatorFactory.make(
                 engine: engine, settings: s, aiKey: aiKey()) else { continue }
-            engineLabel = translator.label
+            engineLabel = engine.shortLabel
             do {
                 let result = try await translator.translate(text, from: nil, to: target)
                 guard !Task.isCancelled else { return }
@@ -113,7 +135,7 @@ public final class TranslationModel: ObservableObject {
             return
         }
         #if canImport(Translation)
-        engineLabel = "Apple 本地"
+        engineLabel = TranslationEngine.apple.shortLabel
         applePendingText = text
         appleConfiguration = AppleTranslationConfiguration.make(source: source, target: target)
         appleRequestID += 1
@@ -125,7 +147,9 @@ public final class TranslationModel: ObservableObject {
 
     // MARK: 视图回调
 
-    public func applyApple(_ text: String, sourceLanguage: String?) {
+    /// serial 必须匹配当前请求：旧会话的迟到回调直接丢弃，否则会覆盖新译文/引擎名。
+    public func applyApple(_ text: String, sourceLanguage: String?, serial: Int) {
+        guard serial == appleRequestID else { return }
         guard !text.isEmpty else {
             fail(TranslationError.malformed)
             return
@@ -133,7 +157,8 @@ public final class TranslationModel: ObservableObject {
         apply(TranslationOutput(text: text, detectedLanguage: sourceLanguage, engine: .apple))
     }
 
-    public func failApple(_ message: String) {
+    public func failApple(_ message: String, serial: Int) {
+        guard serial == appleRequestID else { return }
         // Translation.framework 的语言包错误文案是英文，换成人话
         if message.localizedCaseInsensitiveContains("language pair")
             || message.localizedCaseInsensitiveContains("not supported") {
@@ -146,7 +171,7 @@ public final class TranslationModel: ObservableObject {
     private func apply(_ result: TranslationOutput) {
         output = result.text
         detectedLanguage = result.detectedLanguage
-        engineLabel = result.engine == .apple ? "Apple 本地" : engineLabel
+        engineLabel = result.engine.shortLabel
         isWorking = false
         errorMessage = nil
     }

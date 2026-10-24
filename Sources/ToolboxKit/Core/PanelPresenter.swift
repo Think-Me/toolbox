@@ -26,6 +26,8 @@ public final class PanelPresenter {
 
     public private(set) var isShowing = false
     public private(set) var frontAppBeforePresentation: NSRunningApplication?
+    /// 钉住时点击面板外不关闭（翻译浮窗用）；Esc 仍可关闭。
+    public private(set) var isPinned = false
 
     private var panel: FloatingPanel?
     private var globalMonitor: Any?
@@ -62,9 +64,8 @@ public final class PanelPresenter {
                    display: false)
         p.makeKeyAndOrderFront(nil)
 
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { _ in
-            MainActor.assumeIsolated { PanelPresenter.shared.dismissCurrent(reason: .clickOutside) }
-        }
+        isPinned = false
+        installOutsideMonitor()
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard event.keyCode == PanelPresenter.escapeKeyCode else { return event }
             MainActor.assumeIsolated { PanelPresenter.shared.dismissCurrent(reason: .escape) }
@@ -75,6 +76,38 @@ public final class PanelPresenter {
     }
 
     static let escapeKeyCode: UInt16 = 53
+
+    /// 钉住/取消钉住：只切"点外面是否关闭"，Esc 始终有效。
+    public func setPinned(_ pinned: Bool) {
+        guard isShowing else { return }
+        isPinned = pinned
+        if pinned {
+            removeOutsideMonitor()
+        } else if globalMonitor == nil {
+            installOutsideMonitor()
+        }
+    }
+
+    /// 点面板外的统一出口：钉住时忽略。抽出来是为了探针能直接验证这套规则。
+    public func handleOutsideClick() {
+        guard isShowing, !isPinned else { return }
+        dismissCurrent(reason: .clickOutside)
+    }
+
+    /// 探针用：确认钉住时监听确实被摘掉、取消后又装回来。
+    public var outsideMonitorInstalled: Bool { globalMonitor != nil }
+
+    private func installOutsideMonitor() {
+        guard globalMonitor == nil else { return }
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { _ in
+            MainActor.assumeIsolated { PanelPresenter.shared.handleOutsideClick() }
+        }
+    }
+
+    private func removeOutsideMonitor() {
+        if let m = globalMonitor { NSEvent.removeMonitor(m) }
+        globalMonitor = nil
+    }
 
     /// 内容变多/变少时按需改尺寸（翻译浮窗用）。
     /// 固定顶边而不是中心：面板从光标下方展开，高度变化时上沿不动看起来才不跳。
@@ -93,13 +126,13 @@ public final class PanelPresenter {
     /// 否则漏一次 orderOut 就会留下看不见但吃事件的浮层。
     public func dismissCurrent(reason: DismissReason) {
         guard isShowing || panel != nil else { return }
-        if let m = globalMonitor { NSEvent.removeMonitor(m) }
-        globalMonitor = nil
+        removeOutsideMonitor()
         if let m = localMonitor { NSEvent.removeMonitor(m) }
         localMonitor = nil
         panel?.orderOut(nil)
         panel = nil
         isShowing = false
+        isPinned = false
         let cb = onDismiss
         onDismiss = nil
         cb?(reason)

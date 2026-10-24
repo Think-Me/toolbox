@@ -21,6 +21,18 @@ public enum TranslationEngine: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    /// 浮窗头部空间窄，用短名；设置页和菜单里仍用完整 `label`。
+    public var shortLabel: String {
+        switch self {
+        case .auto:     return "自动"
+        case .apple:    return "Apple"
+        case .youdao:   return "有道"
+        case .mymemory: return "MyMemory"
+        case .google:   return "Google"
+        case .ai:       return "AI"
+        }
+    }
+
     /// 需要联网的引擎（Apple 本地不联网）。
     public var isOnline: Bool { self != .apple && self != .auto }
 }
