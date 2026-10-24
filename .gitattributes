@@ -9,4 +9,5 @@ Makefile  text eol=lf
 
 # 二进制资源，不做换行转换
 *.icns binary
+*.ico  binary
 *.png  binary

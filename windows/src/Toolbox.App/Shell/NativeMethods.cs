@@ -43,6 +43,23 @@ internal static class NativeMethods
     public const uint NiifInfo = 0x1;
     public const uint NiifError = 0x3;
 
+    /// <summary>MOD_NOREPEAT：按住不放时只触发一次，否则长按会刷出一串菜单。</summary>
+    public const uint ModNoRepeat = 0x4000;
+
+    /// <summary>RegisterHotKey 说"已被注册"时 GetLastError 的返回值。</summary>
+    public const int ErrorHotkeyAlreadyRegistered = 1409;
+
+    // AppendMenu 的 uFlags
+    public const uint MfString = 0x00000000;
+    public const uint MfGrayed = 0x00000001;
+    public const uint MfChecked = 0x00000008;
+    public const uint MfPopup = 0x00000010;
+    public const uint MfSeparator = 0x00000800;
+
+    // TrackPopupMenuEx 的 uFlags
+    public const uint TpmRightButton = 0x0002;
+    public const uint TpmReturnCmd = 0x0100;
+
     /// <summary>v4 语义下的通知码（lParam 低字）。</summary>
     public const int NinSelect = 0x0400;
     public const int NinKeySelect = 0x0401;
@@ -103,4 +120,34 @@ internal static class NativeMethods
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool DestroyIcon(IntPtr icon);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool RegisterHotKey(IntPtr window, int id, uint modifiers, uint virtualKey);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool UnregisterHotKey(IntPtr window, int id);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr CreatePopupMenu();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool AppendMenu(IntPtr menu, uint flags, UIntPtr itemId, string? text);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool DestroyMenu(IntPtr menu);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern int TrackPopupMenuEx(IntPtr menu, uint flags, int x, int y, IntPtr window, IntPtr parameters);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetForegroundWindow(IntPtr window);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool PostMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
 }
