@@ -28,6 +28,8 @@ internal partial class SettingsWindow : Window
             key => context.SaveAiKey(key),
             message => context.Log(message));
 
+        HostsHost.Content = new HostsTab(context);
+
         BuildHotkeyRows();
         ShowHotkeyFailures(context.Failures);
         LoadGeneralState();

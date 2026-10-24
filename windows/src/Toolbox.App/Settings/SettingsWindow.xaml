@@ -40,8 +40,7 @@
         </TabItem>
 
         <TabItem Header="Hosts 规则">
-            <local:PlaceholderTab Phase="P3"
-                                  Description="规则库编辑与启停、托管块写入（需提权 helper）、DNS 刷新。" />
+            <ContentControl x:Name="HostsHost" />
         </TabItem>
 
         <TabItem Header="截图与贴图">

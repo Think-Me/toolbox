@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/Toolbox.App/Toolbox.App.csproj" />
     <Project Path="src/Toolbox.Core/Toolbox.Core.csproj" />
+    <Project Path="src/Toolbox.Elevated/Toolbox.Elevated.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Toolbox.Core.Tests/Toolbox.Core.Tests.csproj" />

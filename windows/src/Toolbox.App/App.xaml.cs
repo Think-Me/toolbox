@@ -8,10 +8,12 @@ using Toolbox.App.Actions;
 using Toolbox.App.Clipboard;
 using Toolbox.App.Diagnostics;
 using Toolbox.App.Hotkeys;
+using Toolbox.App.Hosts;
 using Toolbox.App.Settings;
 using Toolbox.App.Shell;
 using Toolbox.App.Translation;
 using Toolbox.Core.Clipboard;
+using Toolbox.Core.Hosts;
 using Toolbox.Core.Infrastructure;
 using Toolbox.Core.Settings;
 using Toolbox.Core.Shell;
@@ -40,6 +42,9 @@ public partial class App : Application
     private ClipboardPanelWindow? _clipboardPanel;
     private TranslationController? _translationController;
     private TranslationPopup? _translationPopup;
+    private HostsStore? _hostsStore;
+    private HostsLibrary _hostsLibrary = new();
+    private bool _applyingHosts;
     private DispatcherTimer? _clipboardCoalesce;
 
     /// <summary>呼出面板之前的前台窗口，粘贴要打回这里。</summary>
@@ -110,6 +115,10 @@ public partial class App : Application
         _monitor = new ClipboardMonitor(_clipboardStore, _settings, _log);
         var orphaned = ClipboardMedia.Cleanup(_paths.MediaDirectory, _clipboardStore.AllMediaShas());
         if (orphaned > 0) _log?.Info($"清理孤立媒体文件 {orphaned} 个");
+
+        _hostsStore = new HostsStore(_paths.HostsRules);
+        _hostsLibrary = _hostsStore.Load();
+
         _sink.ClipboardUpdated = OnClipboardUpdated;
         if (!NativeMethods.AddClipboardFormatListener(_sink.Handle))
             _log?.Error("注册剪贴板监听失败，历史采集不可用");
@@ -330,7 +339,7 @@ public partial class App : Application
         _pasteTarget = NativeMethods.GetForegroundWindow();
 
         // 每次打开都重新取快照：勾选状态必须是"此刻的真实状态"，不能是启动时的。
-        var items = TrayMenuBuilder.Items(_settings, _recording, LoginItem.IsEnabled(), TrayHostsSnapshot.Empty);
+        var items = TrayMenuBuilder.Items(_settings, _recording, LoginItem.IsEnabled(), BuildHostsSnapshot());
         var (action, ruleId) = _menu.Show(items);
         if (action == TrayAction.None) return;
 
@@ -347,13 +356,13 @@ public partial class App : Application
         table.Bind(TrayAction.ToggleLoginItem, _ => ToggleLoginItem());
         table.Bind(TrayAction.Clipboard, _ => ShowClipboardPanel());
         table.Bind(TrayAction.Translate, _ => ShowTranslation());
+        table.Bind(TrayAction.HostsPanel, _ => ShowSettings());
+        table.Bind(TrayAction.HostsManagementToggle, _ => ToggleHostsManagement());
+        table.Bind(TrayAction.HostsRuleToggle, ruleId => ToggleHostsRule(ruleId));
 
         // 还没做的模块：菜单照常可点，点了明确告诉用户什么时候会有，而不是静默无反应。
         TrayAction[] pending =
         [
-            TrayAction.HostsPanel,
-            TrayAction.HostsManagementToggle,
-            TrayAction.HostsRuleToggle,
             TrayAction.CaptureRegion,
         ];
         foreach (var action in pending) table.Bind(action, _ => ReportPending(action));
@@ -368,10 +377,79 @@ public partial class App : Application
         _tray?.ShowBalloon(name, $"这个功能将在 {phase} 提供。");
     }
 
+    /// <summary>托盘子菜单要显示的真实规则快照，每次开菜单重新取。</summary>
+    private TrayHostsSnapshot BuildHostsSnapshot() => new(
+        _hostsLibrary.ManagementOn,
+        _hostsLibrary.Groups.SelectMany(g => g.Rules)
+            .Select(rule => new TrayHostsRow(
+                rule.Id,
+                _hostsLibrary.Groups.FirstOrDefault(g => g.Rules.Contains(rule))?.Name ?? "",
+                rule.Name,
+                rule.Enabled))
+            .ToList());
+
+    private void ToggleHostsManagement()
+    {
+        _hostsLibrary.ManagementOn = !_hostsLibrary.ManagementOn;
+        _hostsStore?.Save(_hostsLibrary);
+        _log?.Info($"Hosts 托管 → {(_hostsLibrary.ManagementOn ? "开" : "关")}");
+        ApplyHostsInBackground();
+    }
+
+    private void ToggleHostsRule(Guid? ruleId)
+    {
+        if (ruleId is not { } id) return;
+        var rule = _hostsLibrary.AllRules.FirstOrDefault(r => r.Id == id);
+        if (rule is null) return;
+
+        rule.Enabled = !rule.Enabled;
+        _hostsStore?.Save(_hostsLibrary);
+        _log?.Info($"规则 {rule.Name} → {(rule.Enabled ? "启用" : "停用")}");
+        ApplyHostsInBackground();
+    }
+
+    /// <summary>
+    /// hosts 应用要过 UAC（最多等 60s），绝不能在 UI 线程上等；
+    /// 连续切换时合并成一次，前一次没做完就跳过本次。
+    /// </summary>
+    private void ApplyHostsInBackground()
+    {
+        if (_applyingHosts)
+        {
+            _log?.Info("上一次 hosts 应用还没结束，跳过本次");
+            return;
+        }
+        _applyingHosts = true;
+
+        Task.Run(() =>
+        {
+            try
+            {
+                CompileResult compiled;
+                try
+                {
+                    compiled = _hostsLibrary.Compile(HostsApplier.ReadCurrentHosts());
+                }
+                catch (BrokenSentinelException error)
+                {
+                    // 绝不猜范围：块坏了只能引导用户恢复，而不是替他改
+                    ReportStatus($"hosts 托管块损坏：{error.Message}。可在设置里恢复原始 hosts。");
+                    return;
+                }
+
+                var outcome = HostsApplier.Apply(compiled.Content);
+                _log?.Info($"应用 hosts：ok={outcome.Ok} {outcome.Message}");
+                ReportStatus(outcome.Ok ? outcome.Message : $"应用 hosts 失败：{outcome.Message}");
+            }
+            finally
+            {
+                _applyingHosts = false;
+            }
+        });
+    }
+
     private static (string Name, string Phase) Pending(TrayAction action) => action switch
     {
-        TrayAction.HostsPanel or TrayAction.HostsRuleToggle or TrayAction.HostsManagementToggle =>
-            ("Hosts 规则", "P3"),
         TrayAction.CaptureRegion => ("区域截图", "P4"),
         _ => ("该功能", "后续版本"),
     };
@@ -420,6 +498,18 @@ public partial class App : Application
         SaveSettings = () => _store?.Save(_settings),
         LoadAiKey = () => LoadAiKey(_paths.AiKeyFile) ?? "",
         SaveAiKey = key => SaveAiKey(key),
+        Hosts = () => _hostsLibrary,
+        HostsChanged = () =>
+        {
+            _hostsStore?.Save(_hostsLibrary);
+            ApplyHostsInBackground();
+        },
+        RestoreHosts = () => Task.Run(() =>
+        {
+            var outcome = HostsApplier.Restore();
+            _log?.Info($"恢复 hosts：ok={outcome.Ok} {outcome.Message}");
+            ReportStatus(outcome.Ok ? outcome.Message : $"恢复 hosts 失败：{outcome.Message}");
+        }),
         Log = message => _log?.Info(message),
     };
 

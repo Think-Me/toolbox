@@ -1,4 +1,5 @@
 using Toolbox.App.Hotkeys;
+using Toolbox.Core.Hosts;
 using Toolbox.Core.Infrastructure;
 using Toolbox.Core.Settings;
 
@@ -23,6 +24,15 @@ internal sealed class SettingsContext
 
     /// <summary>整份设置落盘。</summary>
     public required Action SaveSettings { get; init; }
+
+    /// <summary>规则库（实时对象，勾选后调用 HostsChanged 保存并应用）。</summary>
+    public required Func<HostsLibrary> Hosts { get; init; }
+
+    /// <summary>规则库有改动：保存 + 后台应用（会弹 UAC）。</summary>
+    public required Action HostsChanged { get; init; }
+
+    /// <summary>恢复原始 hosts 备份。</summary>
+    public required Action RestoreHosts { get; init; }
 
     /// <summary>读 DPAPI 解密后的 AI Key；没有返回空串。</summary>
     public required Func<string> LoadAiKey { get; init; }

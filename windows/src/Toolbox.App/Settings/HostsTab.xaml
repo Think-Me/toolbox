@@ -1,0 +1,27 @@
+<UserControl x:Class="Toolbox.App.Settings.HostsTab"
+             x:ClassModifier="internal"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="18,14">
+            <CheckBox x:Name="ManagementCheck"
+                      Content="启用 hosts 托管（写入 Toolbox 托管块，块外内容原样保留）"
+                      Click="OnManagementClick" />
+
+            <TextBlock x:Name="StatusText"
+                       Margin="0,8,0,0"
+                       TextWrapping="Wrap"
+                       Foreground="#666" />
+
+            <TextBlock Text="规则" FontWeight="SemiBold" Margin="0,16,0,0" />
+            <TextBlock Text="勾选即启用并应用；每次应用都会弹一次 UAC 授权"
+                       Foreground="#999" FontSize="11" Margin="0,4,0,0" />
+            <StackPanel x:Name="RulesPanel" Margin="0,8,0,0" />
+
+            <Button Content="恢复原始 hosts（首次写入前的备份）"
+                    Click="OnRestoreClick"
+                    HorizontalAlignment="Left"
+                    Margin="0,18,0,0" />
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

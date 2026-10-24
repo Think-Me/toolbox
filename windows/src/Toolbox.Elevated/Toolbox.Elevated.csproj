@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>Toolbox.Elevated</RootNamespace>
+    <AssemblyName>Toolbox.Elevated</AssemblyName>
+    <!-- hosts 写入只这一条路，锁 x64 和 App 保持一致 -->
+    <PlatformTarget>x64</PlatformTarget>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <!--
+    helper 必须自包含单文件：它由 App 以 runas 提权启动，**提权进程不继承父进程的环境变量**，
+    DOTNET_ROOT 传不过去，框架依赖的 exe 在提权下会因找不到运行时直接启动失败（实测踩过）。
+    Debug 构建时顺带 publish 一份自包含单文件，App 的 CopyElevatedHelper 负责拷到自己旁边。
+    嵌套 publish 用 Release，避免再次触发本 Target 造成递归。
+  -->
+  <Target Name="PublishSelfContained" AfterTargets="Build" Condition="'$(Configuration)' == 'Debug'">
+    <Exec Command="dotnet publish &quot;$(MSBuildProjectFullPath)&quot; -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o &quot;$(MSBuildProjectDirectory)\bin\single&quot;" />
+  </Target>
+
+</Project>
