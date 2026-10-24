@@ -48,9 +48,10 @@ internal static class ClipboardPaste
             return (PasteOutcome.CopiedOnly, "已复制到剪贴板。目标窗口没切过来，请手动按 Ctrl+V");
         }
 
-        return SendCtrlV()
+        var (sent, error) = SendCtrlV();
+        return sent
             ? (PasteOutcome.Pasted, "")
-            : (PasteOutcome.CopiedOnly, "已复制到剪贴板，但合成按键失败，请手动按 Ctrl+V");
+            : (PasteOutcome.CopiedOnly, $"已复制到剪贴板，但合成按键失败（SendInput 注入 {error}），请手动按 Ctrl+V");
     }
 
     private static bool HasPayload(ClipboardItem item, byte[]? png) => item.Kind switch
@@ -61,10 +62,14 @@ internal static class ClipboardPaste
         _ => false,
     };
 
-    /// <summary>剪贴板经常被别的程序占着，重试几次比直接判失败好。</summary>
+    /// <summary>
+    /// 剪贴板经常被别的程序占着（这台机器上实测连 Set-Clipboard 都会失败），必须重试。
+    /// **最后一次失败也要吞掉**并返回 false —— 如果让 COMException 飞出去，
+    /// 就是未处理异常：内容没写进去、降级提示也不会出现。
+    /// </summary>
     private static bool WriteToClipboard(ClipboardItem item, byte[]? png)
     {
-        for (var attempt = 0; attempt < 5; attempt++)
+        for (var attempt = 0; attempt < 10; attempt++)
         {
             try
             {
@@ -94,13 +99,10 @@ internal static class ClipboardPaste
 
                 return true;
             }
-            catch (COMException) when (attempt < 4)
+            catch (Exception error) when (error is COMException or ExternalException)
             {
-                Thread.Sleep(30);
-            }
-            catch (ExternalException) when (attempt < 4)
-            {
-                Thread.Sleep(30);
+                // 剪贴板被占用：等一下再试。10 次 × 40ms = 400ms。
+                Thread.Sleep(40);
             }
         }
 
@@ -121,7 +123,7 @@ internal static class ClipboardPaste
         return false;
     }
 
-    private static bool SendCtrlV()
+    private static (bool Ok, string Detail) SendCtrlV()
     {
         var inputs = new NativeMethods.Input[]
         {
@@ -132,7 +134,9 @@ internal static class ClipboardPaste
         };
 
         var sent = NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeMethods.Input>());
-        return sent == inputs.Length;
+        return sent == inputs.Length
+            ? (true, "")
+            : (false, $"{sent}/{inputs.Length}，Win32 错误 {Marshal.GetLastWin32Error()}");
     }
 
     private static NativeMethods.Input Key(ushort virtualKey, bool up) => new()

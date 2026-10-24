@@ -226,6 +226,7 @@ internal static class NativeMethods
     public struct InputUnion
     {
         [FieldOffset(0)] public KeyboardInput Keyboard;
+        [FieldOffset(0)] public MouseInput Mouse;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -238,6 +239,24 @@ internal static class NativeMethods
         public IntPtr ExtraInfo;
     }
 
+    /// <summary>
+    /// 联合体里必须带上 MouseInput：x64 下 INPUT 结构体是 40 字节，
+    /// 只放 KeyboardInput 的话是 32 字节，SendInput 会直接报 ERROR_INVALID_PARAMETER (87)。
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MouseInput
+    {
+        public int X;
+        public int Y;
+        public uint MouseData;
+        public uint Flags;
+        public uint Time;
+        public IntPtr ExtraInfo;
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint SendInput(uint count, Input[] inputs, int size);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr FindWindow(string? className, string title);
 }

@@ -38,6 +38,7 @@ public partial class App : Application
     private IntPtr _pasteTarget;
 
     private bool _probeMode;
+    private bool _pasteProbeMode;
     private bool _reportingCrash;
     private bool _recording = true;
 
@@ -45,6 +46,7 @@ public partial class App : Application
     {
         base.OnStartup(e);
         _probeMode = e.Args.Contains("--probe");
+        _pasteProbeMode = e.Args.Contains("--paste-probe");
 
         _paths.EnsureDirectories();
         _log = new RollingFileLogger(_paths.LogsDirectory);
@@ -97,6 +99,14 @@ public partial class App : Application
         if (!NativeMethods.AddClipboardFormatListener(_sink.Handle))
             _log.Error("注册剪贴板监听失败，历史采集不可用");
 
+        // 粘贴链路的确定性自检：绕开托盘/热键，直接驱动 ClipboardPaste。
+        // 必须在没有别的实例运行时做（单实例守卫在上面的分支里）。
+        if (_pasteProbeMode)
+        {
+            RunPasteProbe();
+            return;
+        }
+
         if (_probeMode)
         {
             FinishProbe(trayInstalled, failures);
@@ -129,6 +139,37 @@ public partial class App : Application
             if (item is not null) _log?.Info($"采集 {item.Kind}：{item.DisplayPreview}");
         };
         return timer;
+    }
+
+    /// <summary>
+    /// 粘贴链路自检：写剪贴板 → 验自写抑制 → 向记事本发 Ctrl+V。
+    /// 目标窗口由调用方保证（先开一个标题为 "Untitled - Notepad" 的记事本）。
+    /// </summary>
+    private void RunPasteProbe()
+    {
+        var target = NativeMethods.FindWindow(null, "Untitled - Notepad");
+        _probe.Line($"paste.targethwnd=0x{target.ToInt64():X}");
+        if (target == IntPtr.Zero) _probe.Fail("找不到记事本窗口，请先打开一个空的记事本");
+
+        var item = new ClipboardItem
+        {
+            Kind = ClipboardKind.Text,
+            Text = $"Toolbox 粘贴探针 {DateTime.Now:HHmmss}",
+            ByteLength = 64,
+        };
+
+        var (outcome, message) = ClipboardPaste.Paste(_clipboardStore!, item, _monitor!, target);
+        _probe.Line($"paste.outcome={outcome} {message}");
+        if (outcome == PasteOutcome.Failed) _probe.Fail("粘贴失败：" + message);
+
+        // 自己写完剪贴板后，采集必须被自写抑制挡住，否则历史里会出现重复条目
+        var echoed = _monitor!.Capture();
+        _probe.Line(echoed is null ? "paste.selfwrite-suppressed=true" : "paste.selfwrite-suppressed=FALSE");
+        if (echoed is not null) _probe.Fail("自写抑制失效，历史里会多出重复条目");
+
+        _probe.Write(_paths.ProbeReport);
+        _log?.Info($"paste-probe 完成 ok={_probe.Ok}");
+        Shutdown(_probe.Ok ? 0 : 1);
     }
 
     /// <summary>explorer 崩溃重启会清掉所有托盘图标，只能重新挂一次。</summary>
