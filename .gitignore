@@ -18,3 +18,9 @@ Vendor/
 # 本地保留、不入库（发布时从历史剥离）
 docs/
 Design/
+
+# Windows / .NET
+windows/**/bin/
+windows/**/obj/
+*.user
+.vs/
