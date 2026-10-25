@@ -71,6 +71,24 @@ internal sealed class CaptureOverlay : Window
     private readonly List<Annotation> _annotations = [];
     private List<Point> _penPoints = [];
 
+    // ---- 标注编辑（选中 / 移动 / 角柄缩放 / 删除） ----
+    private enum EditMode
+    {
+        None,
+        Move,
+        Resize,
+    }
+
+    private EditMode _editMode;
+    private int _editIndex = -1;
+    private int _resizeCorner = -1;
+    private Point _editStartLocal;
+    private Rect _editStartBounds;
+    private int? _selectedAnnotation;
+    private readonly Canvas _editCanvas;
+    private readonly Rectangle _editFrame;
+    private readonly Rectangle[] _editHandles = new Rectangle[4];
+
     // ---- 吸附 / 智能选窗 / 放大镜 ----
     private List<SnapRect> _windowRects = [];
     private (double[] Xs, double[] Ys) _snapTargets = ([], []);
@@ -131,6 +149,29 @@ internal sealed class CaptureOverlay : Window
             IsHitTestVisible = false,
             Visibility = Visibility.Collapsed,
         };
+        // 编辑层：选中框 + 角柄。独立于 previewCanvas，因为 ClearPreview 会清空后者
+        _editCanvas = new Canvas { IsHitTestVisible = false, Visibility = Visibility.Collapsed };
+        _editFrame = new Rectangle
+        {
+            Stroke = new SolidColorBrush(Color.FromRgb(0x1E, 0x88, 0xE5)),
+            StrokeThickness = 1,
+            StrokeDashArray = [3, 2],
+            Visibility = Visibility.Collapsed,
+        };
+        for (var i = 0; i < 4; i++)
+        {
+            _editHandles[i] = new Rectangle
+            {
+                Width = 8,
+                Height = 8,
+                Fill = Brushes.White,
+                Stroke = new SolidColorBrush(Color.FromRgb(0x1E, 0x88, 0xE5)),
+                StrokeThickness = 1,
+                Visibility = Visibility.Collapsed,
+            };
+            _editCanvas.Children.Add(_editHandles[i]);
+        }
+        _editCanvas.Children.Add(_editFrame);
         _sizeHint = new TextBlock
         {
             Foreground = Brushes.White,
@@ -160,7 +201,7 @@ internal sealed class CaptureOverlay : Window
         foreach (var element in new UIElement[]
                  {
                      _dark, _frozen, _regionImage, _selectionRect, _hoverHighlight,
-                     _previewCanvas, _sizeHint, _guideV, _guideH, _loupe,
+                     _previewCanvas, _editCanvas, _sizeHint, _guideV, _guideH, _loupe,
                      _toolPanel, _actionPanel,
                  })
             canvas.Children.Add(element);
@@ -176,6 +217,13 @@ internal sealed class CaptureOverlay : Window
             if (e.Key == Key.Escape)
             {
                 Close();
+                e.Handled = true;
+            }
+            else if (e.Key is Key.Delete or Key.Back && _selectedAnnotation is { } index)
+            {
+                _annotations.RemoveAt(index);
+                DeselectAnnotation();
+                RenderAnnotations();
                 e.Handled = true;
             }
         };
@@ -370,8 +418,24 @@ internal sealed class CaptureOverlay : Window
             return;
         }
 
-        if (_activeTool == CaptureTool.None || !_selection.Contains(point)) return;
+        if (_activeTool == CaptureTool.None || !_selection.Contains(point))
+        {
+            // 没激活绘制工具：允许点选/拖动已有标注
+            if (_selection.Contains(point))
+                HandleAnnotationEditMouseDown(new Point(point.X - _selection.X, point.Y - _selection.Y));
+            return;
+        }
 
+        var localPoint = new Point(point.X - _selection.X, point.Y - _selection.Y);
+
+        // 工具激活时点中已有标注 = 编辑它，否则画新的
+        if (HitAnnotation(localPoint) is { } hitIndex)
+        {
+            BeginEdit(hitIndex, localPoint);
+            return;
+        }
+
+        DeselectAnnotation();
         _start = ClampToSelection(point);
         _dragging = true;
         CaptureMouse();
@@ -437,6 +501,14 @@ internal sealed class CaptureOverlay : Window
             return;
         }
 
+        // 编辑拖动优先于画新标注：正在移动/缩放标注时不去更新预览形状。
+        // 注意编辑模式不设置 _dragging，所以要在它的检查之前
+        if (_editMode != EditMode.None)
+        {
+            UpdateEditDrag(new Point(point.X - _selection.X, point.Y - _selection.Y));
+            return;
+        }
+
         if (!_dragging) return;
 
         var clamped = ClampToSelection(point);
@@ -457,6 +529,13 @@ internal sealed class CaptureOverlay : Window
 
     private void OnMouseUp(object sender, MouseButtonEventArgs e)
     {
+        if (_editMode != EditMode.None)
+        {
+            _editMode = EditMode.None;
+            ReleaseMouseCapture();
+            return;
+        }
+
         if (!_dragging) return;
         _dragging = false;
         ReleaseMouseCapture();
@@ -543,6 +622,9 @@ internal sealed class CaptureOverlay : Window
             {
                 _annotations.Add(new TextNote(position, text));
                 RenderAnnotations();
+                _selectedAnnotation = _annotations.Count - 1;
+                _editIndex = _selectedAnnotation.Value;
+                UpdateSelectionVisual();
             }
         }
 
@@ -843,19 +925,200 @@ internal sealed class CaptureOverlay : Window
         _previewCanvas.Visibility = Visibility.Collapsed;
     }
 
-    /// <summary>提交：预览形状移除，标注进列表并栅格化进画布位图。</summary>
+    /// <summary>提交：预览形状移除，标注进列表并栅格化进画布位图；顺手选中它方便接着调。</summary>
     private void CommitPreview(Annotation annotation)
     {
         ClearPreview();
         _annotations.Add(annotation);
         RenderAnnotations();
+        _selectedAnnotation = _annotations.Count - 1;
+        _editIndex = _selectedAnnotation.Value;
+        UpdateSelectionVisual();
     }
 
     private void Undo()
     {
         if (_annotations.Count == 0) return;
         _annotations.RemoveAt(_annotations.Count - 1);
+        DeselectAnnotation();
         RenderAnnotations();
+    }
+
+    // ---- 标注编辑 ----
+
+    private const double GrabRadius = 6;
+
+    /// <summary>标注的包围盒（选区内 DIP）。文字没有精确宽高，用近似框。</summary>
+    private static Rect AnnotationBoundsOf(Annotation annotation) => annotation switch
+    {
+        RectNote r => r.R,
+        EllipseNote e => e.R,
+        MosaicNote m => m.R,
+        ArrowNote a => RectFrom(a.From, a.To),
+        PenNote p => RectFrom(p.Points[0], p.Points[^1]) is var seed
+            ? UnionAll(seed, p.Points)
+            : default,
+        TextNote t => new Rect(t.Position.X, t.Position.Y, Math.Max(24, t.Text.Length * 8.4), 20),
+        _ => default,
+    };
+
+    private static Rect UnionAll(Rect seed, IReadOnlyList<Point> points)
+    {
+        var result = seed;
+        foreach (var point in points) result.Union(point);
+        return result;
+    }
+
+    private int? HitAnnotation(Point local)
+    {
+        var tolerance = NoteThickness;
+        for (var i = _annotations.Count - 1; i >= 0; i--)
+        {
+            var bounds = AnnotationBoundsOf(_annotations[i]);
+            var hit = _annotations[i] switch
+            {
+                EllipseNote ellipse => AnnotationHitTest.HitEllipse(local.X, local.Y,
+                    new SnapRect(bounds.X, bounds.Y, bounds.Width, bounds.Height), tolerance),
+                ArrowNote arrow => AnnotationHitTest.HitPolyline(local.X, local.Y,
+                    [(arrow.From.X, arrow.From.Y), (arrow.To.X, arrow.To.Y)], tolerance),
+                PenNote pen => AnnotationHitTest.HitPolyline(local.X, local.Y,
+                    pen.Points.Select(pt => (pt.X, pt.Y)).ToList(), tolerance),
+                _ => AnnotationHitTest.HitRect(local.X, local.Y,
+                    new SnapRect(bounds.X, bounds.Y, bounds.Width, bounds.Height), tolerance),
+            };
+            if (hit) return i;
+        }
+        return null;
+    }
+
+    private void HandleAnnotationEditMouseDown(Point local)
+    {
+        // 已选中标注的角柄优先（缩放），再试命中（选中并移动），最后取消选中
+        if (_selectedAnnotation is { } index && index < _annotations.Count)
+        {
+            var bounds = AnnotationBoundsOf(_annotations[index]);
+            if (AnnotationHitTest.NearestCorner(local.X, local.Y,
+                    new SnapRect(bounds.X, bounds.Y, bounds.Width, bounds.Height), GrabRadius) is { } corner)
+            {
+                _editIndex = index;
+                _editMode = EditMode.Resize;
+                _resizeCorner = corner.Corner;
+                _editStartLocal = local;
+                _editStartBounds = bounds;
+                CaptureMouse();
+                return;
+            }
+        }
+
+        if (HitAnnotation(local) is { } hit)
+        {
+            BeginEdit(hit, local);
+            return;
+        }
+
+        DeselectAnnotation();
+    }
+
+    private void BeginEdit(int index, Point local)
+    {
+        _selectedAnnotation = index;
+        _editIndex = index;
+        _editMode = EditMode.Move;
+        _resizeCorner = -1;
+        _editStartLocal = local;
+        _editStartBounds = AnnotationBoundsOf(_annotations[index]);
+        UpdateSelectionVisual();
+        CaptureMouse();
+    }
+
+    private void UpdateEditDrag(Point local)
+    {
+        if (_editIndex < 0 || _editIndex >= _annotations.Count) return;
+        var dx = local.X - _editStartLocal.X;
+        var dy = local.Y - _editStartLocal.Y;
+
+        if (_editMode == EditMode.Move)
+        {
+            var bounds = _editStartBounds;
+            _annotations[_editIndex] = _annotations[_editIndex] switch
+            {
+                RectNote r => r with { R = Offset(r.R, dx, dy) },
+                EllipseNote en => en with { R = Offset(en.R, dx, dy) },
+                MosaicNote m => m with { R = Offset(m.R, dx, dy) },
+                ArrowNote a => a with { From = Add(a.From, dx, dy), To = Add(a.To, dx, dy) },
+                PenNote p => p with { Points = p.Points.Select(pt => Add(pt, dx, dy)).ToList() },
+                TextNote t => t with { Position = Add(t.Position, dx, dy) },
+                _ => _annotations[_editIndex],
+            };
+        }
+        else
+        {
+            // 角柄缩放：拖动的角跟随鼠标，对角固定；小于 4x4 就不再收缩
+            var left = _editStartBounds.Left;
+            var top = _editStartBounds.Top;
+            var right = _editStartBounds.Right;
+            var bottom = _editStartBounds.Bottom;
+            if (_resizeCorner is 0 or 3) left = Math.Min(local.X, right - 4);
+            if (_resizeCorner is 1 or 2) right = Math.Max(local.X, left + 4);
+            if (_resizeCorner is 0 or 1) top = Math.Min(local.Y, bottom - 4);
+            if (_resizeCorner is 2 or 3) bottom = Math.Max(local.Y, top + 4);
+            var resized = RectFrom(new Point(left, top), new Point(right, bottom));
+            _annotations[_editIndex] = _annotations[_editIndex] switch
+            {
+                RectNote r => r with { R = resized },
+                EllipseNote en => en with { R = resized },
+                MosaicNote m => m with { R = resized },
+                _ => _annotations[_editIndex],
+            };
+        }
+
+        RenderAnnotations();
+        UpdateSelectionVisual();
+        return;
+
+        static Rect Offset(Rect rect, double dx, double dy) =>
+            new(rect.X + dx, rect.Y + dy, rect.Width, rect.Height);
+
+        static Point Add(Point point, double dx, double dy) => new(point.X + dx, point.Y + dy);
+    }
+
+    private void UpdateSelectionVisual()
+    {
+        if (_selectedAnnotation is not { } index || index >= _annotations.Count)
+        {
+            DeselectAnnotation();
+            return;
+        }
+
+        var bounds = AnnotationBoundsOf(_annotations[index]);
+        Canvas.SetLeft(_editFrame, bounds.Left);
+        Canvas.SetTop(_editFrame, bounds.Top);
+        _editFrame.Width = bounds.Width;
+        _editFrame.Height = bounds.Height;
+        _editFrame.Visibility = Visibility.Visible;
+
+        // 文字/画笔/箭头不支持缩放：只给移动虚线框，不给角柄
+        var resizable = _annotations[index] is RectNote or EllipseNote or MosaicNote;
+        foreach (var (corner, x, y) in AnnotationHitTest.Corners(
+                     new SnapRect(bounds.X, bounds.Y, bounds.Width, bounds.Height)))
+        {
+            var handle = _editHandles[corner];
+            handle.Visibility = resizable ? Visibility.Visible : Visibility.Collapsed;
+            Canvas.SetLeft(handle, x - handle.Width / 2);
+            Canvas.SetTop(handle, y - handle.Height / 2);
+        }
+
+        _editCanvas.Visibility = Visibility.Visible;
+    }
+
+    private void DeselectAnnotation()
+    {
+        _selectedAnnotation = null;
+        _editIndex = -1;
+        _editMode = EditMode.None;
+        _editCanvas.Visibility = Visibility.Collapsed;
+        _editFrame.Visibility = Visibility.Collapsed;
+        foreach (var handle in _editHandles) handle.Visibility = Visibility.Collapsed;
     }
 
     // ---- 导出动作 ----
