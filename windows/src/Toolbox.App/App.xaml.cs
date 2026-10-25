@@ -49,6 +49,7 @@ public partial class App : Application
     private TranslationPopup? _translationPopup;
     private HostsStore? _hostsStore;
     private HostsLibrary _hostsLibrary = new();
+    private PinManager? _pinManager;
     private bool _applyingHosts;
     private DispatcherTimer? _clipboardCoalesce;
 
@@ -125,6 +126,8 @@ public partial class App : Application
         _monitor = new ClipboardMonitor(_clipboardStore, _settings, _log);
         var orphaned = ClipboardMedia.Cleanup(_paths.MediaDirectory, _clipboardStore.AllMediaShas());
         if (orphaned > 0) _log?.Info($"清理孤立媒体文件 {orphaned} 个");
+
+        _pinManager = new PinManager();
 
         _hostsStore = new HostsStore(_paths.HostsRules);
         _hostsLibrary = _hostsStore.Load();
@@ -376,25 +379,92 @@ public partial class App : Application
         }
         _log?.Info($"截图：{capture.PixelWidth}×{capture.PixelHeight} dpiScale={capture.DpiScale:0.00}");
 
+        // 贴图默认参与截图（用户可能就是想把贴图截进去），设置反过来时才暂时隐藏
+        _pinManager?.HideForCaptureIfConfigured(_settings.Capture.PinsParticipateInCapture);
+
         var overlay = new CaptureOverlay(
             capture,
             cropped => System.Windows.Clipboard.SetImage(cropped),
-            (cropped, bounds) =>
-            {
-                new PinWindow(cropped, bounds).Show();
-                _log?.Info($"贴图 {bounds.Width:0}×{bounds.Height:0}");
-            },
+            (cropped, bounds) => PinCapture(cropped, bounds),
             ReportStatus,
             _settings.Capture);
+        overlay.Closed += (_, _) => _pinManager?.RestoreAfterCapture(_settings.Capture.PinsParticipateInCapture);
         overlay.Show();
         _log?.Info($"截图：遮罩窗已显示 visible={overlay.IsVisible}");
+    }
+
+    /// <summary>全屏截图（F2）：整屏直接钉图，不走选区（对齐 macOS captureFullScreenAndPin）。</summary>
+    private void CaptureFullScreenAndPin()
+    {
+        _log?.Info("全屏截图：开始抓屏");
+        var capture = CaptureService.CaptureCursorMonitor();
+        if (capture is null)
+        {
+            ReportStatus("抓屏失败");
+            return;
+        }
+
+        var scale = capture.DpiScale > 0 ? capture.DpiScale : 1;
+        var bounds = new Rect(
+            capture.MonitorPixels.Left / scale,
+            capture.MonitorPixels.Top / scale,
+            capture.PixelWidth / scale,
+            capture.PixelHeight / scale);
+        PinCapture(capture.Image, bounds);
+        _log?.Info($"全屏截图：已钉图 {bounds.Width:0}×{bounds.Height:0} 贴图数={_pinManager?.Count}");
+    }
+
+    private void PinCapture(BitmapSource image, Rect bounds) =>
+        _pinManager?.Pin(image, bounds, PinCallbacksForPins());
+
+    private PinCallbacks PinCallbacksForPins() => new(
+        CopyToClipboard: image =>
+        {
+            // 打自写标记：贴图复制不该被自己的监听再采一遍进历史
+            System.Windows.Clipboard.SetImage(image);
+            MarkSelfWrite();
+            _log?.Info("贴图已复制");
+        },
+        SaveToFile: image => PinWindow.SavePngDialog(image, ReportStatus),
+        Report: ReportStatus);
+
+    private void CloseAllPins()
+    {
+        var count = _pinManager?.Count ?? 0;
+        _pinManager?.CloseAll();
+        _log?.Info($"关闭所有贴图：{count} 张");
+    }
+
+    /// <summary>剪贴板面板 Ctrl+E：把图片条目钉到光标处。</summary>
+    private void PinClipboardImage(ClipboardItem item)
+    {
+        if (_pinManager is null || _clipboardStore is null) return;
+        if (item.MediaSha256 is not { } sha) return;
+
+        var png = _clipboardStore.LoadImage(sha);
+        if (png is null)
+        {
+            ReportStatus("图片文件已不存在");
+            return;
+        }
+
+        try
+        {
+            var frame = BitmapFrame.Create(new MemoryStream(png));
+            if (_pinManager.PinAtCursor(frame, PinCallbacksForPins()) is not null)
+                _log?.Info($"贴图自剪贴板 {frame.PixelWidth}×{frame.PixelHeight}");
+        }
+        catch (Exception error)
+        {
+            ReportStatus($"贴图失败：{error.Message}");
+        }
     }
 
     private void ShowClipboardPanel()
     {
         if (_clipboardStore is null || _monitor is null) return;
 
-        _clipboardPanel ??= new ClipboardPanelWindow(_clipboardStore, PasteClipboardItem, ReportStatus);
+        _clipboardPanel ??= new ClipboardPanelWindow(_clipboardStore, PasteClipboardItem, ReportStatus, PinClipboardImage);
         _clipboardPanel.ShowPanel();
     }
 
@@ -466,6 +536,8 @@ public partial class App : Application
         table.Bind(TrayAction.HostsManagementToggle, _ => ToggleHostsManagement());
         table.Bind(TrayAction.HostsRuleToggle, ruleId => ToggleHostsRule(ruleId));
         table.Bind(TrayAction.CaptureRegion, _ => StartCapture());
+        table.Bind(TrayAction.CaptureFull, _ => CaptureFullScreenAndPin());
+        table.Bind(TrayAction.KillAllPins, _ => CloseAllPins());
 
         return table;
     }

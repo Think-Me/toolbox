@@ -89,6 +89,10 @@ public sealed class HotkeySettings
     public HotkeyGesture Translation { get; set; } = new(HotkeyModifiers.Control | HotkeyModifiers.Alt, 0x54);
     public HotkeyGesture HostsPanel { get; set; } = new(HotkeyModifiers.Control | HotkeyModifiers.Alt, 0x48);
     public HotkeyGesture Screenshot { get; set; } = new(HotkeyModifiers.Control | HotkeyModifiers.Alt, 0x41);
+    /// <summary>F2：整屏直接钉图，不走选区（对齐 macOS 默认）。</summary>
+    public HotkeyGesture CaptureFull { get; set; } = new(HotkeyModifiers.None, 0x71);
+    /// <summary>F3：贴图穿透模式下的唯一救急出口，必须裸按就能触发。</summary>
+    public HotkeyGesture KillAllPins { get; set; } = new(HotkeyModifiers.None, 0x72);
 
     public IEnumerable<(string Name, HotkeyGesture Gesture)> All()
     {
@@ -96,6 +100,8 @@ public sealed class HotkeySettings
         yield return ("划词翻译", Translation);
         yield return ("Hosts 快切", HostsPanel);
         yield return ("区域截图", Screenshot);
+        yield return ("全屏截图", CaptureFull);
+        yield return ("关闭所有贴图", KillAllPins);
     }
 }
 
@@ -118,6 +124,8 @@ public sealed class CaptureSettings
     public string SaveDirectory { get; set; } = "";
     public bool PinAfterCapture { get; set; }
     public int MosaicBlockSize { get; set; } = 12;
+    /// <summary>贴图默认参与截图（用户可能就是想把贴图截进去）；关掉则截图前暂时隐藏贴图。</summary>
+    public bool PinsParticipateInCapture { get; set; } = true;
 }
 
 public sealed class AppSettings

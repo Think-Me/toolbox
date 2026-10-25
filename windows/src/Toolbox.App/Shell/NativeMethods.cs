@@ -352,4 +352,14 @@ internal static class NativeMethods
 
     [DllImport("shcore.dll")]
     public static extern int GetDpiForMonitor(IntPtr monitor, int dpiType, out uint dpiX, out uint dpiY);
+
+    public const int GwlExStyle = -20;
+    public const long WsExTransparent = 0x00000020;
+    public const long WsExLayered = 0x00080000;
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
+    public static extern long GetWindowLongPtr(IntPtr window, int index);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
+    public static extern long SetWindowLongPtr(IntPtr window, int index, long value);
 }

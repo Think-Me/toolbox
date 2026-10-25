@@ -39,6 +39,7 @@ internal partial class ClipboardPanelWindow : Window
     private readonly ClipboardStore _store;
     private readonly Func<ClipboardItem, (PasteOutcome Outcome, string Message)> _paste;
     private readonly Action<string> _report;
+    private readonly Action<ClipboardItem>? _pinImage;
 
     private List<ClipboardItem> _items = [];
     private ClipboardListSelection _selection = new(0);
@@ -47,11 +48,13 @@ internal partial class ClipboardPanelWindow : Window
 
     public ClipboardPanelWindow(ClipboardStore store,
                                 Func<ClipboardItem, (PasteOutcome Outcome, string Message)> paste,
-                                Action<string> report)
+                                Action<string> report,
+                                Action<ClipboardItem>? pinImage = null)
     {
         _store = store;
         _paste = paste;
         _report = report;
+        _pinImage = pinImage;
 
         InitializeComponent();
         PreviewKeyDown += OnPreviewKeyDown;
@@ -88,7 +91,7 @@ internal partial class ClipboardPanelWindow : Window
 
         StatusText.Text = _items.Count == 0
             ? "没有匹配的记录"
-            : $"{_items.Count} 条 · ↑↓ 选择 · Enter 粘贴 · Ctrl+P 置顶 · Del 删除 · Esc 关闭";
+            : $"{_items.Count} 条 · ↑↓ 选择 · Enter 粘贴 · Ctrl+E 贴图 · Ctrl+P 置顶 · Del 删除 · Esc 关闭";
     }
 
     /// <summary>图片缩略图。DecodePixelWidth=48：几百张 4K 图也不会把内存吃光。</summary>
@@ -167,6 +170,13 @@ internal partial class ClipboardPanelWindow : Window
 
             case Key.P when Keyboard.Modifiers == ModifierKeys.Control:
                 TogglePin();
+                e.Handled = true;
+                return;
+
+            // Ctrl+E：把图片条目钉到屏幕上（对齐 macOS 面板的 ⌘E）
+            case Key.E when Keyboard.Modifiers == ModifierKeys.Control:
+                if (Current is { Kind: ClipboardKind.Image } image) _pinImage?.Invoke(image);
+                else _report("只有图片条目能贴图");
                 e.Handled = true;
                 return;
         }

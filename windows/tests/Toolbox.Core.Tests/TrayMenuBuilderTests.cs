@@ -19,6 +19,8 @@ public sealed class TrayMenuBuilderTests
             i => Assert.Equal(TrayAction.Clipboard, i.Action),
             i => Assert.Equal(TrayAction.HostsPanel, i.Action),
             i => Assert.Equal(TrayAction.CaptureRegion, i.Action),
+            i => Assert.Equal(TrayAction.CaptureFull, i.Action),
+            i => Assert.Equal(TrayAction.KillAllPins, i.Action),
             i => Assert.Equal(TrayAction.Translate, i.Action),
             i => Assert.True(i.IsSeparator),
             i => Assert.Equal(TrayAction.TogglePause, i.Action),

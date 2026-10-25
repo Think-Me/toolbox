@@ -1,12 +1,14 @@
 namespace Toolbox.Core.Settings;
 
-/// <summary>四个全局热键的业务身份。数值同时用作 RegisterHotKey 的 id（要求 1..0xBFFF）。</summary>
+/// <summary>全局热键的业务身份。数值同时用作 RegisterHotKey 的 id（要求 1..0xBFFF）。</summary>
 public enum HotkeyId
 {
     ClipboardPanel = 1,
     Translation = 2,
     HostsPanel = 3,
     Screenshot = 4,
+    CaptureFull = 5,
+    KillAllPins = 6,
 }
 
 /// <summary>
@@ -28,6 +30,8 @@ public sealed class HotkeyRegistrationTable
         [HotkeyId.Translation] = hotkeys.Translation,
         [HotkeyId.HostsPanel] = hotkeys.HostsPanel,
         [HotkeyId.Screenshot] = hotkeys.Screenshot,
+        [HotkeyId.CaptureFull] = hotkeys.CaptureFull,
+        [HotkeyId.KillAllPins] = hotkeys.KillAllPins,
     });
 
     public HotkeyGesture? Get(HotkeyId id) => _bindings.TryGetValue(id, out var gesture) ? gesture : null;
@@ -45,6 +49,8 @@ public sealed class HotkeyRegistrationTable
                 case HotkeyId.Translation: target.Translation = gesture; break;
                 case HotkeyId.HostsPanel: target.HostsPanel = gesture; break;
                 case HotkeyId.Screenshot: target.Screenshot = gesture; break;
+                case HotkeyId.CaptureFull: target.CaptureFull = gesture; break;
+                case HotkeyId.KillAllPins: target.KillAllPins = gesture; break;
             }
         }
     }
@@ -55,6 +61,8 @@ public sealed class HotkeyRegistrationTable
         HotkeyId.Translation => "划词翻译",
         HotkeyId.HostsPanel => "Hosts 快切",
         HotkeyId.Screenshot => "区域截图",
+        HotkeyId.CaptureFull => "全屏截图",
+        HotkeyId.KillAllPins => "关闭所有贴图",
         _ => id.ToString(),
     };
 

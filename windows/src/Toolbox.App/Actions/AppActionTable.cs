@@ -28,6 +28,8 @@ internal sealed class AppActionTable
         HotkeyId.Translation => TrayAction.Translate,
         HotkeyId.HostsPanel => TrayAction.HostsPanel,
         HotkeyId.Screenshot => TrayAction.CaptureRegion,
+        HotkeyId.CaptureFull => TrayAction.CaptureFull,
+        HotkeyId.KillAllPins => TrayAction.KillAllPins,
         _ => TrayAction.None,
     };
 }

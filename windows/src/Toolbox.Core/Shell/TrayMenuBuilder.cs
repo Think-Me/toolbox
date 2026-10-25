@@ -24,6 +24,8 @@ public static class TrayMenuBuilder
                 Children = HostsSubmenu(hosts),
             },
             HotkeyItem("区域截图", HotkeyId.Screenshot, hotkeys, TrayAction.CaptureRegion),
+            HotkeyItem("全屏截图", HotkeyId.CaptureFull, hotkeys, TrayAction.CaptureFull),
+            HotkeyItem("关闭所有贴图", HotkeyId.KillAllPins, hotkeys, TrayAction.KillAllPins),
             HotkeyItem("翻译选中文本", HotkeyId.Translation, hotkeys, TrayAction.Translate),
             TrayMenuItem.Separator,
             new TrayMenuItem { Title = "暂停剪贴板记录", IsChecked = !recording, Action = TrayAction.TogglePause },

@@ -7,6 +7,8 @@ public enum TrayAction
     Clipboard,
     HostsPanel,
     CaptureRegion,
+    CaptureFull,
+    KillAllPins,
     Translate,
     TogglePause,
     OpenSettings,
