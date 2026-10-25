@@ -362,4 +362,29 @@ internal static class NativeMethods
 
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
     public static extern long SetWindowLongPtr(IntPtr window, int index, long value);
+
+    public delegate bool EnumWindowsProc(IntPtr window, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc proc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindowVisible(IntPtr window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsIconic(IntPtr window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetWindowRect(IntPtr window, out Rect2 rect);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowTextLength(IntPtr window);
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out int value, int size);
+
+    public const int DwmwaCloaked = 14;
 }

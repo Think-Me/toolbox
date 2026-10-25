@@ -6,6 +6,8 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using Microsoft.Win32;
+using Toolbox.App.Shell;
+using Toolbox.Core.Capture;
 using Toolbox.Core.Settings;
 
 namespace Toolbox.App.Capture;
@@ -69,6 +71,18 @@ internal sealed class CaptureOverlay : Window
     private readonly List<Annotation> _annotations = [];
     private List<Point> _penPoints = [];
 
+    // ---- 吸附 / 智能选窗 / 放大镜 ----
+    private List<SnapRect> _windowRects = [];
+    private (double[] Xs, double[] Ys) _snapTargets = ([], []);
+    private SnapRect? _clickCandidate;
+    private Point _downPoint;
+    private readonly Rectangle _hoverHighlight;
+    private readonly Rectangle _guideV;
+    private readonly Rectangle _guideH;
+    private readonly Border _loupe;
+    private readonly Image _loupeImage;
+    private readonly TextBlock _loupeLabel;
+
     public CaptureOverlay(ScreenCapture capture, Action<BitmapSource> onCopy,
                           Action<BitmapSource, Rect> onPin, Action<string> report,
                           CaptureSettings settings)
@@ -128,14 +142,34 @@ internal sealed class CaptureOverlay : Window
         _toolPanel = BuildToolPanel();
         _actionPanel = BuildActionPanel();
 
+        // 悬停高亮：鼠标下方的完整窗口（智能选窗目标）
+        _hoverHighlight = new Rectangle
+        {
+            Stroke = new SolidColorBrush(Color.FromArgb(0xB0, 0x1E, 0x88, 0xE5)),
+            StrokeThickness = 2,
+            Fill = new SolidColorBrush(Color.FromArgb(0x18, 0x1E, 0x88, 0xE5)),
+            Visibility = Visibility.Collapsed,
+            IsHitTestVisible = false,
+        };
+        // 吸附辅助线：吸上哪条边就在哪画一条竖/横线
+        _guideV = MakeGuideLine(vertical: true);
+        _guideH = MakeGuideLine(vertical: false);
+        (_loupe, _loupeImage, _loupeLabel) = BuildLoupe();
+
         var canvas = new Canvas();
         foreach (var element in new UIElement[]
                  {
-                     _dark, _frozen, _regionImage, _selectionRect, _previewCanvas, _sizeHint,
+                     _dark, _frozen, _regionImage, _selectionRect, _hoverHighlight,
+                     _previewCanvas, _sizeHint, _guideV, _guideH, _loupe,
                      _toolPanel, _actionPanel,
                  })
             canvas.Children.Add(element);
         Content = canvas;
+
+        // 窗口候选与吸附线：EnumWindows 的返回顺序即 Z 序（从前到后）
+        var windowRectsPx = WindowCandidates.VisibleTopLevelRects();
+        _windowRects = WindowCandidates.ToOverlayDip(windowRectsPx, _capture.MonitorPixels, scale);
+        _snapTargets = SelectionSnapping.Targets(_windowRects, new SnapRect(0, 0, Width, Height));
 
         PreviewKeyDown += (_, e) =>
         {
@@ -207,6 +241,105 @@ internal sealed class CaptureOverlay : Window
         SyncToolbar();
     }
 
+    // ---- 吸附线 / 放大镜 / 悬停高亮 ----
+
+    private static Rectangle MakeGuideLine(bool vertical)
+    {
+        var brush = new SolidColorBrush(Color.FromRgb(0x1E, 0x88, 0xE5));
+        return vertical
+            ? new Rectangle { Width = 1, Fill = brush, Visibility = Visibility.Collapsed, IsHitTestVisible = false }
+            : new Rectangle { Height = 1, Fill = brush, Visibility = Visibility.Collapsed, IsHitTestVisible = false };
+    }
+
+    private static (Border, Image, TextBlock) BuildLoupe()
+    {
+        var image = new Image { Width = 120, Height = 120 };
+        // 像素级放大必须用邻近采样：默认的双线性会把 15×15 糊成一片
+        RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.NearestNeighbor);
+        var label = new TextBlock
+        {
+            Foreground = Brushes.White,
+            Background = new SolidColorBrush(Color.FromArgb(0xC0, 0x30, 0x30, 0x30)),
+            Padding = new Thickness(6, 2, 6, 2),
+            FontSize = 11,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
+        var loupe = new Border
+        {
+            Child = new StackPanel { Children = { image, label } },
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66)),
+            BorderThickness = new Thickness(1),
+            Background = new SolidColorBrush(Color.FromArgb(0x40, 0, 0, 0)),
+            IsHitTestVisible = false,
+            Visibility = Visibility.Collapsed,
+            Width = 126,
+        };
+        return (loupe, image, label);
+    }
+
+    private void UpdateMagnifier(Point cursorDip)
+    {
+        var scale = _capture.DpiScale;
+        var px = (int)Math.Round(cursorDip.X * scale);
+        var py = (int)Math.Round(cursorDip.Y * scale);
+        const int side = 15;
+
+        var width = Math.Min(side, _capture.PixelWidth);
+        var height = Math.Min(side, _capture.PixelHeight);
+        var srcX = Math.Clamp(px - side / 2, 0, Math.Max(0, _capture.PixelWidth - width));
+        var srcY = Math.Clamp(py - side / 2, 0, Math.Max(0, _capture.PixelHeight - height));
+        _loupeImage.Source = new CroppedBitmap(_capture.Image, new Int32Rect(srcX, srcY, width, height));
+        _loupeLabel.Text = HexAt(px, py);
+        _loupe.Visibility = Visibility.Visible;
+        PlaceNearCursor(cursorDip, _loupe, 126, 152);
+    }
+
+    /// <summary>光标处像素的 HEX。越界不崩。</summary>
+    private string HexAt(int px, int py)
+    {
+        if (px < 0 || py < 0 || px >= _capture.PixelWidth || py >= _capture.PixelHeight)
+            return "#??????";
+        var bytes = new byte[4];
+        _capture.Image.CopyPixels(new Int32Rect(px, py, 1, 1), bytes, 4, 0);
+        // Bgr32 的内存序是 B,G,R,x
+        return $"#{bytes[2]:X2}{bytes[1]:X2}{bytes[0]:X2}";
+    }
+
+    /// <summary>默认放光标右下，放不下翻到左/上，最后钳进容器（对齐 macOS Magnifier.frame）。</summary>
+    private void PlaceNearCursor(Point cursor, FrameworkElement element, double width, double height)
+    {
+        const double gap = 18;
+        var x = cursor.X + gap;
+        if (x + width > ActualWidth) x = cursor.X - gap - width;
+        var y = cursor.Y + gap;
+        if (y + height > ActualHeight) y = cursor.Y - gap - height;
+        Canvas.SetLeft(element, Math.Clamp(x, 0, Math.Max(0, ActualWidth - width)));
+        Canvas.SetTop(element, Math.Clamp(y, 0, Math.Max(0, ActualHeight - height)));
+    }
+
+    private void UpdateHoverHighlight(Point point)
+    {
+        if (SelectionSnapping.TopmostWindowContaining(point.X, point.Y, _windowRects) is not { } window)
+        {
+            _hoverHighlight.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        Canvas.SetLeft(_hoverHighlight, window.Left);
+        Canvas.SetTop(_hoverHighlight, window.Top);
+        _hoverHighlight.Width = window.Width;
+        _hoverHighlight.Height = window.Height;
+        _hoverHighlight.Visibility = Visibility.Visible;
+    }
+
+    private void HideSelectionAids()
+    {
+        _hoverHighlight.Visibility = Visibility.Collapsed;
+        _loupe.Visibility = Visibility.Collapsed;
+        _guideV.Visibility = Visibility.Collapsed;
+        _guideH.Visibility = Visibility.Collapsed;
+    }
+
     private void SyncToolbar()
     {
         var active = new SolidColorBrush(Color.FromRgb(0xBB, 0xDE, 0xFB));
@@ -223,8 +356,11 @@ internal sealed class CaptureOverlay : Window
 
         if (!_selected)
         {
+            _downPoint = point;
+            _clickCandidate = SelectionSnapping.TopmostWindowContaining(point.X, point.Y, _windowRects);
             _start = point;
             _dragging = true;
+            _hoverHighlight.Visibility = Visibility.Collapsed;
             _selectionRect.Visibility = Visibility.Visible;
             _frozen.Visibility = Visibility.Visible;
             _toolPanel.Visibility = Visibility.Collapsed;
@@ -286,16 +422,22 @@ internal sealed class CaptureOverlay : Window
     private void OnMouseMove(object sender, MouseEventArgs e)
     {
         var point = e.GetPosition(this);
-        if (!_dragging)
-        {
-            return;
-        }
 
         if (!_selected)
         {
+            // 放大镜常驻跟随；没在拖动时还要管悬停高亮
+            UpdateMagnifier(point);
+            if (!_dragging)
+            {
+                UpdateHoverHighlight(point);
+                return;
+            }
+
             UpdateSelection(point);
             return;
         }
+
+        if (!_dragging) return;
 
         var clamped = ClampToSelection(point);
         switch (_activeTool)
@@ -321,15 +463,30 @@ internal sealed class CaptureOverlay : Window
 
         if (!_selected)
         {
+            var distancePx = (e.GetPosition(this) - _downPoint).Length * _capture.DpiScale;
+
+            // 几乎没拖 = 点击：智能选窗 —— 直接选中悬停高亮的那个窗口
+            if (distancePx < 3 && _clickCandidate is { } candidate)
+            {
+                _selection = new Rect(candidate.X, candidate.Y, candidate.Width, candidate.Height);
+                DrawSelection();
+                HideSelectionAids();
+                _selected = true;
+                FinishSelection();
+                return;
+            }
+
             // 小于 3x3 像素视为误触（与 Core 的 CaptureGeometry 同一约定）
             if (_selection.Width * _capture.DpiScale < 3 || _selection.Height * _capture.DpiScale < 3)
             {
                 _selectionRect.Visibility = Visibility.Collapsed;
                 _frozen.Visibility = Visibility.Hidden;
                 _sizeHint.Visibility = Visibility.Collapsed;
+                HideSelectionAids();
                 return;
             }
 
+            HideSelectionAids();
             _selected = true;
             FinishSelection();
             return;
@@ -414,29 +571,57 @@ internal sealed class CaptureOverlay : Window
 
     private void UpdateSelection(Point current)
     {
-        var left = Math.Min(_start.X, current.X);
-        var top = Math.Min(_start.Y, current.Y);
-        var width = Math.Abs(current.X - _start.X);
-        var height = Math.Abs(current.Y - _start.Y);
+        // 边缘吸附到窗口边界 / 屏幕边界，辅助线指出吸上了哪条
+        var raw = SnapRect.FromPoints(_start.X, _start.Y, current.X, current.Y);
+        var snapped = SelectionSnapping.Snap(raw, _snapTargets);
+        _selection = new Rect(snapped.Rect.X, snapped.Rect.Y, snapped.Rect.Width, snapped.Rect.Height);
+        DrawSelection();
+        UpdateSnapGuides(snapped);
+    }
 
-        _selection = new Rect(left, top, width, height);
-        Canvas.SetLeft(_selectionRect, left);
-        Canvas.SetTop(_selectionRect, top);
-        _selectionRect.Width = width;
-        _selectionRect.Height = height;
+    private void DrawSelection()
+    {
+        Canvas.SetLeft(_selectionRect, _selection.Left);
+        Canvas.SetTop(_selectionRect, _selection.Top);
+        _selectionRect.Width = _selection.Width;
+        _selectionRect.Height = _selection.Height;
 
         // 选区内"亮起来"：把冻结原图裁到选区，盖在暗层上面（标注阶段换成画布位图）
         _frozen.Clip = new RectangleGeometry(_selection);
 
-        Canvas.SetLeft(_sizeHint, left);
-        Canvas.SetTop(_sizeHint, top + height + 6);
-        _sizeHint.Text = $"{(int)(width * _capture.DpiScale)} × {(int)(height * _capture.DpiScale)}";
+        Canvas.SetLeft(_sizeHint, _selection.Left);
+        Canvas.SetTop(_sizeHint, _selection.Top + _selection.Height + 6);
+        _sizeHint.Text = $"{(int)(_selection.Width * _capture.DpiScale)} × {(int)(_selection.Height * _capture.DpiScale)}";
         _sizeHint.Visibility = Visibility.Visible;
+    }
+
+    private void UpdateSnapGuides(SnappedSelection snapped)
+    {
+        if (snapped.SnappedEdges.Contains(SnapEdge.Left) || snapped.SnappedEdges.Contains(SnapEdge.Right))
+        {
+            var x = snapped.SnappedEdges.Contains(SnapEdge.Left) ? _selection.Left : _selection.Right;
+            Canvas.SetLeft(_guideV, x);
+            Canvas.SetTop(_guideV, 0);
+            _guideV.Height = ActualHeight;
+            _guideV.Visibility = Visibility.Visible;
+        }
+        else _guideV.Visibility = Visibility.Collapsed;
+
+        if (snapped.SnappedEdges.Contains(SnapEdge.Top) || snapped.SnappedEdges.Contains(SnapEdge.Bottom))
+        {
+            var y = snapped.SnappedEdges.Contains(SnapEdge.Top) ? _selection.Top : _selection.Bottom;
+            Canvas.SetTop(_guideH, y);
+            Canvas.SetLeft(_guideH, 0);
+            _guideH.Width = ActualWidth;
+            _guideH.Visibility = Visibility.Visible;
+        }
+        else _guideH.Visibility = Visibility.Collapsed;
     }
 
     /// <summary>选区确定：裁出底图，建画布位图，显示工具栏并默认选中矩形工具。</summary>
     private void FinishSelection()
     {
+        HideSelectionAids();
         var scale = _capture.DpiScale;
         var x = (int)(_selection.X * scale);
         var y = (int)(_selection.Y * scale);
