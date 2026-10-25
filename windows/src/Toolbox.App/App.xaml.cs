@@ -405,7 +405,8 @@ public partial class App : Application
             cropped => System.Windows.Clipboard.SetImage(cropped),
             (cropped, bounds) => PinCapture(cropped, bounds),
             ReportStatus,
-            _settings.Capture);
+            _settings.Capture,
+            message => _log?.Info(message));
         overlay.Closed += (_, _) => _pinManager?.RestoreAfterCapture(_settings.Capture.PinsParticipateInCapture);
         overlay.Show();
         _log?.Info($"截图：遮罩窗已显示 visible={overlay.IsVisible}");

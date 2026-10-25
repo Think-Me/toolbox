@@ -5,6 +5,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
+using System.Windows.Interop;
 using Microsoft.Win32;
 using Toolbox.App.Shell;
 using Toolbox.Core.Capture;
@@ -49,6 +50,7 @@ internal sealed class CaptureOverlay : Window
     private readonly Action<BitmapSource, Rect> _onPin;
     private readonly Action<string> _report;
     private readonly CaptureSettings _settings;
+    private readonly Action<string>? _trace;
 
     private readonly Rectangle _dark;
     private readonly Image _frozen;
@@ -103,13 +105,14 @@ internal sealed class CaptureOverlay : Window
 
     public CaptureOverlay(ScreenCapture capture, Action<BitmapSource> onCopy,
                           Action<BitmapSource, Rect> onPin, Action<string> report,
-                          CaptureSettings settings)
+                          CaptureSettings settings, Action<string>? trace = null)
     {
         _capture = capture;
         _onCopy = onCopy;
         _onPin = onPin;
         _report = report;
         _settings = settings;
+        _trace = trace;
 
         WindowStyle = WindowStyle.None;
         AllowsTransparency = true;
@@ -219,8 +222,7 @@ internal sealed class CaptureOverlay : Window
                 Close();
                 e.Handled = true;
             }
-            else if (e.Key is Key.Delete or Key.Back && _selectedAnnotation is { } index)
-            {
+            else if (e.Key is Key.Delete or Key.Back && _selectedAnnotation is { } index)            {
                 _annotations.RemoveAt(index);
                 DeselectAnnotation();
                 RenderAnnotations();
@@ -230,6 +232,22 @@ internal sealed class CaptureOverlay : Window
         MouseLeftButtonDown += OnMouseDown;
         MouseMove += OnMouseMove;
         MouseLeftButtonUp += OnMouseUp;
+    }
+
+    /// <summary>
+    /// 托盘后台进程 Show 的窗口抢不到前台（Windows 前台锁），
+    /// 会被当前前台窗口压住——用户看到的就是「热键按了没反应」。必须强制前台。
+    /// 另：WPF 的 Topmost=true 在这个路径下实测没有落进 EXSTYLE
+    /// （窗口是前台却不在 TOPMOST 层，被全屏的前台应用盖住），用 SetWindowPos 钉死。
+    /// </summary>
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        var hwnd = new WindowInteropHelper(this).Handle;
+        NativeMethods.SetWindowPos(hwnd, NativeMethods.HwndTopmost, 0, 0, 0, 0,
+            NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpShowWindow);
+        NativeMethods.ForceForeground(hwnd);
+        _trace?.Invoke("遮罩已置顶并强制前台");
     }
 
     // ---- 工具栏 ----
@@ -408,6 +426,7 @@ internal sealed class CaptureOverlay : Window
             _clickCandidate = SelectionSnapping.TopmostWindowContaining(point.X, point.Y, _windowRects);
             _start = point;
             _dragging = true;
+            _trace?.Invoke($"遮罩 拖拽开始 at {point.X:0},{point.Y:0} 候选窗口数={_windowRects.Count}");
             _hoverHighlight.Visibility = Visibility.Collapsed;
             _selectionRect.Visibility = Visibility.Visible;
             _frozen.Visibility = Visibility.Visible;
@@ -426,6 +445,7 @@ internal sealed class CaptureOverlay : Window
             return;
         }
 
+        _trace?.Invoke($"遮罩 mousedown at {point.X:0},{point.Y:0} candidate={(_clickCandidate is { } c ? $"{c.Width:0}x{c.Height:0}" : "null")}");
         var localPoint = new Point(point.X - _selection.X, point.Y - _selection.Y);
 
         // 工具激活时点中已有标注 = 编辑它，否则画新的
@@ -547,6 +567,7 @@ internal sealed class CaptureOverlay : Window
             // 几乎没拖 = 点击：智能选窗 —— 直接选中悬停高亮的那个窗口
             if (distancePx < 3 && _clickCandidate is { } candidate)
             {
+                _trace?.Invoke($"遮罩 点击选窗 {candidate.Width:0}x{candidate.Height:0}");
                 _selection = new Rect(candidate.X, candidate.Y, candidate.Width, candidate.Height);
                 DrawSelection();
                 HideSelectionAids();
@@ -566,6 +587,7 @@ internal sealed class CaptureOverlay : Window
             }
 
             HideSelectionAids();
+            _trace?.Invoke($"遮罩 选区确认 {_selection.Width:0}x{_selection.Height:0} at {_selection.X:0},{_selection.Y:0}");
             _selected = true;
             FinishSelection();
             return;
@@ -1155,6 +1177,7 @@ internal sealed class CaptureOverlay : Window
             // 截图复制是真实复制，应该进历史，不打自写标记
             System.Windows.Clipboard.SetImage(image);
             _onCopy(image);
+            _trace?.Invoke($"遮罩 已复制 {image.PixelWidth}x{image.PixelHeight}");
             return true;
         }
         catch (Exception error)

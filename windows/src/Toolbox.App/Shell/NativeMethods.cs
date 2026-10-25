@@ -363,9 +363,62 @@ internal static class NativeMethods
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")]
     public static extern long SetWindowLongPtr(IntPtr window, int index, long value);
 
-    public delegate bool EnumWindowsProc(IntPtr window, IntPtr lParam);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool BringWindowToTop(IntPtr window);
+
+    public static readonly IntPtr HwndTopmost = new(-1);
+    public const uint SwpNoMove = 0x0002;
+    public const uint SwpNoSize = 0x0001;
+    public const uint SwpShowWindow = 0x0040;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
 
     [DllImport("user32.dll")]
+    public static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, IntPtr extraInfo);
+
+    [DllImport("user32.dll")]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    public const uint KeyeventfKeyup = 0x0002;
+    public const byte VkMenu = 0x12;
+
+    /// <summary>
+    /// 把窗口强制带到前台。托盘后台进程 Show() 的新窗口受 Windows 前台锁限制：
+    /// 抢不到前台就会被当前前台窗口（全屏 IDE/浏览器都算）压住——
+    /// 用户的表现就是「热键按了像没反应」（实测 codeg 全屏 WebView 盖着时复现）。
+    /// 注册热键的进程本来就有 SetForegroundWindow 权限，这里再加
+    /// AttachThreadInput 借用前台线程 + ALT 技巧双保险。
+    /// </summary>
+    public static void ForceForeground(IntPtr window)
+    {
+        var foreground = GetForegroundWindow();
+        GetWindowThreadProcessId(foreground, out var foregroundThread);
+        var thisThread = GetCurrentThreadId();
+        var attached = foregroundThread != 0 && foregroundThread != thisThread &&
+                       AttachThreadInput(thisThread, foregroundThread, true);
+        try
+        {
+            BringWindowToTop(window);
+            SetForegroundWindow(window);
+        }
+        finally
+        {
+            if (attached) AttachThreadInput(thisThread, foregroundThread, false);
+        }
+
+        // 兜底：ALT 技巧——系统对「用户刚按过 Alt」的进程放宽前台锁
+        keybd_event(VkMenu, 0, 0, IntPtr.Zero);
+        SetForegroundWindow(window);
+        keybd_event(VkMenu, 0, KeyeventfKeyup, IntPtr.Zero);
+    }
+
+    public delegate bool EnumWindowsProc(IntPtr window, IntPtr lParam);    [DllImport("user32.dll")]
     public static extern bool EnumWindows(EnumWindowsProc proc, IntPtr lParam);
 
     [DllImport("user32.dll")]
