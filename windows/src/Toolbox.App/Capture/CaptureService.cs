@@ -14,8 +14,10 @@ internal sealed record ScreenCapture(BitmapSource Image, double DpiScale, Native
 }
 
 /// <summary>
-/// BitBlt 抓屏。只抓光标所在的那台显示器（v1 限制，README 已知差异）：
-/// 跨多台不同 DPI 的显示器拼一张图，遮罩窗的坐标换算会复杂一个数量级，先不做。
+/// BitBlt 抓屏。区域截图抓**整个虚拟桌面**（所有显示器拼成一张，对齐 macOS
+/// 覆盖虚拟桌面的行为）；全屏截图只抓光标所在那台。
+/// 混合 DPI：拼图位图用光标所在屏的 DPI 做 DIP 换算，其它 DPI 不同的屏上
+/// 选区尺寸会有偏差（README 已知差异）。
 /// CAPTUREBLT 带上分层窗口，否则 Alt-Tab 之类的浮层会缺。
 /// </summary>
 internal static class CaptureService
@@ -31,12 +33,49 @@ internal static class CaptureService
         var info = new NativeMethods.MonitorInfo { Size = Marshal.SizeOf<NativeMethods.MonitorInfo>() };
         if (!NativeMethods.GetMonitorInfo(monitor, ref info)) return null;
 
-        // PerMonitorV2 下逐显示器取 DPI；失败回落 96
-        var dpiResult = NativeMethods.GetDpiForMonitor(monitor, 0, out var dpiX, out var dpiY);
-        var scale = dpiResult == 0 && dpiX > 0 ? dpiX / 96.0 : 1.0;
+        var scale = DpiScaleOf(monitor);
+        return Blt(info.Monitor, scale);
+    }
 
-        var width = info.Monitor.Right - info.Monitor.Left;
-        var height = info.Monitor.Bottom - info.Monitor.Top;
+    /// <summary>整个虚拟桌面拼成一张位图（多显示器的并集，负坐标原点也已包含）。</summary>
+    public static ScreenCapture? CaptureVirtualDesktop()
+    {
+        var left = NativeMethods.GetSystemMetrics(NativeMethods.SmXVirtualScreen);
+        var top = NativeMethods.GetSystemMetrics(NativeMethods.SmYVirtualScreen);
+        var width = NativeMethods.GetSystemMetrics(NativeMethods.SmCxVirtualScreen);
+        var height = NativeMethods.GetSystemMetrics(NativeMethods.SmCyVirtualScreen);
+        if (width <= 0 || height <= 0) return null;
+
+        // DIP 换算用光标所在屏的 DPI（v1 限制：混合 DPI 下非光标屏会有偏差）
+        double scale = 1;
+        if (NativeMethods.GetCursorPos(out var cursor))
+        {
+            var monitor = NativeMethods.MonitorFromPoint(
+                new NativeMethods.Point { X = cursor.X, Y = cursor.Y },
+                NativeMethods.MonitorDefaultToNearest);
+            scale = DpiScaleOf(monitor);
+        }
+
+        return Blt(new NativeMethods.Rect2
+        {
+            Left = left,
+            Top = top,
+            Right = left + width,
+            Bottom = top + height,
+        }, scale);
+    }
+
+    private static double DpiScaleOf(IntPtr monitor)
+    {
+        // PerMonitorV2 下逐显示器取 DPI；失败回落 96
+        var dpiResult = NativeMethods.GetDpiForMonitor(monitor, 0, out var dpiX, out var _);
+        return dpiResult == 0 && dpiX > 0 ? dpiX / 96.0 : 1.0;
+    }
+
+    private static ScreenCapture? Blt(NativeMethods.Rect2 rect, double scale)
+    {
+        var width = rect.Right - rect.Left;
+        var height = rect.Bottom - rect.Top;
         if (width <= 0 || height <= 0) return null;
 
         var screenDc = NativeMethods.GetDC(IntPtr.Zero);
@@ -69,7 +108,7 @@ internal static class CaptureService
                 {
                     NativeMethods.SelectObject(memDc, dib);
                     if (!NativeMethods.BitBlt(memDc, 0, 0, width, height,
-                            screenDc, info.Monitor.Left, info.Monitor.Top,
+                            screenDc, rect.Left, rect.Top,
                             NativeMethods.Srccopy | NativeMethods.CaptureBlt))
                         return null;
 
@@ -81,7 +120,7 @@ internal static class CaptureService
                         PixelFormats.Bgr32, null, pixels, stride);
                     image.Freeze();
 
-                    return new ScreenCapture(image, scale, info.Monitor);
+                    return new ScreenCapture(image, scale, rect);
                 }
                 finally
                 {

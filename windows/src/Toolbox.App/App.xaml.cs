@@ -307,6 +307,17 @@ public partial class App : Application
         _probe.Line($"capture.dpiScale={capture.DpiScale:0.00}");
         _probe.Line($"capture.monitor=({capture.MonitorPixels.Left},{capture.MonitorPixels.Top})-({capture.MonitorPixels.Right},{capture.MonitorPixels.Bottom})");
 
+        // 虚拟桌面（多屏拼图）链路：尺寸必须 >= 单屏
+        var virtualDesktop = Capture.CaptureService.CaptureVirtualDesktop();
+        if (virtualDesktop is null)
+            _probe.Fail("虚拟桌面抓屏返回空");
+        else
+        {
+            _probe.Line($"capture.virtual={virtualDesktop.PixelWidth}x{virtualDesktop.PixelHeight} dpiScale={virtualDesktop.DpiScale:0.00}");
+            if (virtualDesktop.PixelWidth < capture.PixelWidth || virtualDesktop.PixelHeight < capture.PixelHeight)
+                _probe.Fail("虚拟桌面尺寸小于单屏，拼图坐标错乱");
+        }
+
         var full = Path.Combine(_paths.LocalRoot, "capture-probe-full.png");
         SavePng(capture.Image, full);
         _probe.Line($"capture.full={(File.Exists(full) ? new FileInfo(full).Length : -1)} {full}");
@@ -366,11 +377,11 @@ public partial class App : Application
         return true;
     }
 
-    /// <summary>区域截图：先冻结屏幕，再盖遮罩窗划选区。</summary>
+    /// <summary>区域截图：冻结整个虚拟桌面（多显示器拼一张），再盖遮罩窗划选区。</summary>
     private void StartCapture()
     {
         _log?.Info("截图：开始抓屏");
-        var capture = CaptureService.CaptureCursorMonitor();
+        var capture = CaptureService.CaptureVirtualDesktop();
         if (capture is null)
         {
             _log?.Info("截图：抓屏返回空");
