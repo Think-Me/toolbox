@@ -29,6 +29,8 @@ internal partial class SettingsWindow : Window
             message => context.Log(message));
 
         HostsHost.Content = new HostsTab(context);
+        ClipboardHost.Content = new ClipboardTab(context.Settings.Clipboard, () => context.SaveSettings());
+        CaptureHost.Content = new CaptureTab(context.Settings.Capture, () => context.SaveSettings());
 
         BuildHotkeyRows();
         ShowHotkeyFailures(context.Failures);

@@ -6,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using Microsoft.Win32;
+using Toolbox.Core.Settings;
 
 namespace Toolbox.App.Capture;
 
@@ -45,6 +46,7 @@ internal sealed class CaptureOverlay : Window
     private readonly Action<BitmapSource> _onCopy;
     private readonly Action<BitmapSource, Rect> _onPin;
     private readonly Action<string> _report;
+    private readonly CaptureSettings _settings;
 
     private readonly Rectangle _dark;
     private readonly Image _frozen;
@@ -68,12 +70,14 @@ internal sealed class CaptureOverlay : Window
     private List<Point> _penPoints = [];
 
     public CaptureOverlay(ScreenCapture capture, Action<BitmapSource> onCopy,
-                          Action<BitmapSource, Rect> onPin, Action<string> report)
+                          Action<BitmapSource, Rect> onPin, Action<string> report,
+                          CaptureSettings settings)
     {
         _capture = capture;
         _onCopy = onCopy;
         _onPin = onPin;
         _report = report;
+        _settings = settings;
 
         WindowStyle = WindowStyle.None;
         AllowsTransparency = true;
@@ -456,6 +460,7 @@ internal sealed class CaptureOverlay : Window
         _actionPanel.Visibility = Visibility.Visible;
         SelectTool(CaptureTool.Rectangle);
         ShowPanels();
+        RunAutomaticActions();
     }
 
     private void ShowPanels()
@@ -585,7 +590,7 @@ internal sealed class CaptureOverlay : Window
         var pixels = new byte[stride * height];
         _baseCropped.CopyPixels(pixels, stride, 0);
 
-        var blockSize = Math.Max(4, (int)(12 * _capture.DpiScale));
+        var blockSize = Math.Max(4, (int)(_settings.MosaicBlockSize * _capture.DpiScale));
         var mosaiced = Toolbox.Core.Capture.Mosaic.Apply(
             pixels, width, height, 4, 0, 0, width, height, blockSize);
 
@@ -676,29 +681,52 @@ internal sealed class CaptureOverlay : Window
         return _canvasBitmap;
     }
 
+    /// <summary>选区确认：按设置的自动动作依次执行，有任何一个生效就关窗。</summary>
+    private void RunAutomaticActions()
+    {
+        if (!_settings.CopyAfterCapture && !_settings.PinAfterCapture && !_settings.SaveToPictures) return;
+
+        var acted = false;
+        if (_settings.CopyAfterCapture) acted |= DoCopy();
+        if (_settings.SaveToPictures) acted |= DoAutoSave();
+        if (_settings.PinAfterCapture) acted |= DoPin();
+        if (acted) Close();
+    }
+
     private void CopySelection()
     {
+        if (DoCopy()) Close();
+    }
+
+    private bool DoCopy()
+    {
         var image = ExportImage();
-        if (image is null) return;
+        if (image is null) return false;
         try
         {
             // 截图复制是真实复制，应该进历史，不打自写标记
             System.Windows.Clipboard.SetImage(image);
             _onCopy(image);
-            Close();
+            return true;
         }
         catch (Exception error)
         {
             _report($"复制截图失败：{error.Message}");
+            return false;
         }
     }
 
     private void PinSelection()
     {
+        if (DoPin()) Close();
+    }
+
+    private bool DoPin()
+    {
         var image = ExportImage();
-        if (image is null) return;
+        if (image is null) return false;
         _onPin(image, SelectionScreenRect());
-        Close();
+        return true;
     }
 
     private void SaveSelection()
@@ -710,16 +738,15 @@ internal sealed class CaptureOverlay : Window
         {
             Filter = "PNG 图片|*.png",
             FileName = $"Toolbox-{DateTime.Now:yyyyMMdd-HHmmss}.png",
-            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+            InitialDirectory = _settings.SaveDirectory.Length > 0
+                ? _settings.SaveDirectory
+                : Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
         };
         if (dialog.ShowDialog(this) != true) return;
 
         try
         {
-            var encoder = new PngBitmapEncoder();
-            encoder.Frames.Add(BitmapFrame.Create(image));
-            using var stream = File.Create(dialog.FileName);
-            encoder.Save(stream);
+            SavePng(image, dialog.FileName);
             _report($"截图已保存：{dialog.FileName}");
             Close();
         }
@@ -727,6 +754,38 @@ internal sealed class CaptureOverlay : Window
         {
             _report($"保存失败：{error.Message}");
         }
+    }
+
+    /// <summary>自动保存：不弹对话框，直接落盘到固定目录。</summary>
+    private bool DoAutoSave()
+    {
+        var image = ExportImage();
+        if (image is null) return false;
+
+        try
+        {
+            var directory = _settings.SaveDirectory.Length > 0
+                ? _settings.SaveDirectory
+                : System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Toolbox");
+            Directory.CreateDirectory(directory);
+            var file = System.IO.Path.Combine(directory, $"Toolbox-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+            SavePng(image, file);
+            _report($"截图已保存：{file}");
+            return true;
+        }
+        catch (Exception error)
+        {
+            _report($"自动保存失败：{error.Message}");
+            return false;
+        }
+    }
+
+    private static void SavePng(BitmapSource image, string path)
+    {
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(image));
+        using var stream = File.Create(path);
+        encoder.Save(stream);
     }
 
     private Rect SelectionScreenRect() =>

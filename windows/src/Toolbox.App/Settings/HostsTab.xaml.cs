@@ -67,6 +67,31 @@ internal partial class HostsTab : UserControl
                 };
                 row.Children.Add(check);
 
+                // 远程规则：显示缓存状态 + 手动同步按钮
+                if (rule.Kind == RuleKind.Remote)
+                {
+                    var state = new TextBlock
+                    {
+                        FontSize = 11,
+                        Foreground = System.Windows.Media.Brushes.Gray,
+                        Margin = new Thickness(18, 0, 6, 0),
+                        VerticalAlignment = VerticalAlignment.Center,
+                        MaxWidth = 220,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                    };
+                    UpdateRemoteStateText(state, captured);
+                    row.Children.Add(state);
+
+                    var syncButton = new Button
+                    {
+                        Content = "同步",
+                        Padding = new Thickness(8, 1, 8, 1),
+                        VerticalAlignment = VerticalAlignment.Center,
+                    };
+                    syncButton.Click += (_, _) => SyncRemoteRule(syncButton, state, captured);
+                    row.Children.Add(syncButton);
+                }
+
                 var buttons = new StackPanel
                 {
                     Orientation = Orientation.Horizontal,
@@ -103,6 +128,34 @@ internal partial class HostsTab : UserControl
     {
         _context.RestoreHosts();
         SetStatus("正在恢复原始 hosts（会弹 UAC）……", error: false);
+    }
+
+    private static void UpdateRemoteStateText(TextBlock target, HostsRule rule)
+    {
+        if (rule.LastError is { } error)
+            target.Text = $"⚠ {error}";
+        else if (rule.LastSyncAt is { } at)
+            target.Text = rule.CachedContent is null ? "从未同步成功" : $"缓存于 {at:MM-dd HH:mm}";
+        else
+            target.Text = "尚未同步";
+    }
+
+    /// <summary>同步是网络 IO（最长 15s），放后台跑；结果回 UI 线程刷新。</summary>
+    private void SyncRemoteRule(Button button, TextBlock state, HostsRule rule)
+    {
+        var ui = TaskScheduler.FromCurrentSynchronizationContext();
+        button.IsEnabled = false;
+        SetStatus($"正在同步「{rule.Name}」…", error: false);
+
+        Task.Run(() => _context.SyncHostsRule(rule)).ContinueWith(task =>
+        {
+            button.IsEnabled = true;
+            UpdateRemoteStateText(state, rule);
+            SetStatus(task.Status == TaskStatus.RanToCompletion
+                ? task.Result
+                : $"同步失败：{task.Exception?.GetBaseException().Message}", error: task.Status != TaskStatus.RanToCompletion);
+            _context.Log($"远程规则「{rule.Name}」同步：{task.Result}");
+        }, ui);
     }
 
     private void AddRule(RuleGroup group)

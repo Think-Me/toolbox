@@ -34,9 +34,7 @@
         </TabItem>
 
         <TabItem Header="剪贴板">
-            <!-- P1 已可用：面板 + 粘贴；这里只差配置项（容量 / 排除进程），补上后替换 -->
-            <local:PlaceholderTab Phase="后续版本"
-                                  Description="剪贴板历史已可用（Ctrl+Alt+V 呼出）。容量、排除进程等配置项待补。" />
+            <ContentControl x:Name="ClipboardHost" />
         </TabItem>
 
         <TabItem Header="Hosts 规则">
@@ -44,8 +42,7 @@
         </TabItem>
 
         <TabItem Header="截图与贴图">
-            <local:PlaceholderTab Phase="P4"
-                                  Description="区域截图、标注（矩形 / 椭圆 / 箭头 / 画笔 / 文字 / 马赛克）、贴图窗口。" />
+            <ContentControl x:Name="CaptureHost" />
         </TabItem>
 
         <TabItem Header="翻译">

@@ -13,11 +13,21 @@ public enum CaptureDecision
 /// <summary>采集侧的策略判定，和 Win32 剪贴板读取分开，便于单测。</summary>
 public sealed class ClipboardFilter(ClipboardSettings settings)
 {
-    private readonly HashSet<string> _excluded = new(
-        settings.ExcludedProcesses
-            .Select(NormalizeProcess)
-            .Where(s => s.Length > 0),
-        StringComparer.OrdinalIgnoreCase);
+    // 排除列表按引用缓存：设置页保存时会换成新 List 实例，这里自动跟着失效重建。
+    private List<string>? _excludedSource;
+    private HashSet<string>? _excludedSet;
+
+    private HashSet<string> ExcludedSet()
+    {
+        if (ReferenceEquals(_excludedSource, settings.ExcludedProcesses) && _excludedSet is not null)
+            return _excludedSet;
+
+        _excludedSource = settings.ExcludedProcesses;
+        _excludedSet = new HashSet<string>(
+            settings.ExcludedProcesses.Select(NormalizeProcess).Where(s => s.Length > 0),
+            StringComparer.OrdinalIgnoreCase);
+        return _excludedSet;
+    }
 
     public ClipboardSettings Settings => settings;
 
@@ -32,7 +42,7 @@ public sealed class ClipboardFilter(ClipboardSettings settings)
     }
 
     public bool IsExcludedSource(string? process) =>
-        _excluded.Contains(NormalizeProcess(process));
+        ExcludedSet().Contains(NormalizeProcess(process));
 
     public bool IsSelfWrite(DateTimeOffset now, DateTimeOffset? lastSelfWriteAt)
     {

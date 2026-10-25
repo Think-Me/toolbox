@@ -384,7 +384,8 @@ public partial class App : Application
                 new PinWindow(cropped, bounds).Show();
                 _log?.Info($"贴图 {bounds.Width:0}×{bounds.Height:0}");
             },
-            ReportStatus);
+            ReportStatus,
+            _settings.Capture);
         overlay.Show();
         _log?.Info($"截图：遮罩窗已显示 visible={overlay.IsVisible}");
     }
@@ -596,8 +597,37 @@ public partial class App : Application
             _log?.Info($"恢复 hosts：ok={outcome.Ok} {outcome.Message}");
             ReportStatus(outcome.Ok ? outcome.Message : $"恢复 hosts 失败：{outcome.Message}");
         }),
+        SyncHostsRule = SyncHostsRule,
         Log = message => _log?.Info(message),
     };
+
+    /// <summary>
+    /// 远程规则同步（调用方保证在后台线程）。同步完立刻保存并应用，
+    /// 让"内容变了"不用用户再手动点一次勾选。
+    /// </summary>
+    private string SyncHostsRule(HostsRule rule)
+    {
+        var outcome = HostsRemoteSync.Sync(rule, new HttpRemoteFetcher());
+        _hostsStore?.Save(_hostsLibrary);
+        _log?.Info($"远程规则「{rule.Name}」同步：{outcome} cache={rule.CachedContent?.Length ?? 0}B");
+
+        if (outcome == RemoteSyncOutcome.NotModified || outcome == RemoteSyncOutcome.Updated)
+        {
+            // 未启用的规则不参与编译，应用它只会白弹一次 UAC
+            if (rule.Enabled) ApplyHostsInBackground();
+            return outcome == RemoteSyncOutcome.Updated
+                ? $"「{rule.Name}」已更新（{rule.CachedContent?.Length ?? 0} 字节）"
+                : $"「{rule.Name}」内容未变化";
+        }
+
+        if (outcome == RemoteSyncOutcome.UsedCache)
+        {
+            if (rule.Enabled) ApplyHostsInBackground();
+            return $"「{rule.Name}」同步失败（{rule.LastError}），继续用缓存";
+        }
+
+        return $"「{rule.Name}」同步失败：{rule.LastError}";
+    }
 
     /// <summary>AI Key 用 DPAPI 保护，读不到（没存/坏文件）就按没有 Key 处理，AI 引擎会给出明确错误。</summary>
     private static string? LoadAiKey(string file)

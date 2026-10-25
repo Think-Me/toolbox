@@ -1,0 +1,47 @@
+<UserControl x:Class="Toolbox.App.Settings.ClipboardTab"
+             x:ClassModifier="internal"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="18,14">
+            <TextBlock Text="容量限制" FontWeight="SemiBold" />
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                <TextBlock Text="最多保留" VerticalAlignment="Center" />
+                <TextBox x:Name="MaxItemsBox" Width="70" Margin="8,0,0,0" VerticalContentAlignment="Center" />
+                <TextBlock Text="条" Margin="6,0,20,0" VerticalAlignment="Center" />
+                <TextBlock Text="文本超过" VerticalAlignment="Center" />
+                <TextBox x:Name="MaxTextLengthBox" Width="80" Margin="8,0,0,0" VerticalContentAlignment="Center" />
+                <TextBlock Text="字符" Margin="6,0,0,0" VerticalAlignment="Center" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                <TextBlock Text="图片超过" VerticalAlignment="Center" />
+                <TextBox x:Name="MaxImageMbBox" Width="70" Margin="8,0,0,0" VerticalContentAlignment="Center" />
+                <TextBlock Text="MB 不采集" Margin="6,0,0,0" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Text="超限内容不会被拒绝粘贴，只是不进历史。"
+                       Foreground="#999" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
+
+            <TextBlock Text="排除的来源进程" FontWeight="SemiBold" Margin="0,14,0,0" />
+            <TextBlock Text="这些程序里复制的内容不进历史（小写、不含 .exe），用于密码管理器等敏感场景。"
+                       Foreground="#999" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap" />
+            <ListBox x:Name="ExcludedList" Height="120" Width="300"
+                     HorizontalAlignment="Left" Margin="0,8,0,0" />
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                <TextBox x:Name="NewProcessBox" Width="200" VerticalContentAlignment="Center" />
+                <Button Content="添加" Click="OnAddProcessClick" Padding="12,3" Margin="8,0,0,0" />
+                <Button Content="删除选中" Click="OnRemoveProcessClick" Padding="12,3" Margin="8,0,0,0" />
+            </StackPanel>
+
+            <TextBlock Text="自己写入的忽略窗口" FontWeight="SemiBold" Margin="0,14,0,0" />
+            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                <TextBox x:Name="SelfWriteMsBox" Width="70" VerticalContentAlignment="Center" />
+                <TextBlock Text="毫秒内不采集自己写回剪贴板的内容" Margin="8,0,0,0" VerticalAlignment="Center" />
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+                <Button Content="保存" Click="OnSaveClick" Padding="20,5" />
+                <TextBlock x:Name="SaveStatus" Margin="12,0,0,0" VerticalAlignment="Center" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

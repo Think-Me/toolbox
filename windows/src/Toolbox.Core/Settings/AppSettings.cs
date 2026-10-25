@@ -112,7 +112,8 @@ public sealed class ClipboardSettings
 
 public sealed class CaptureSettings
 {
-    public bool CopyAfterCapture { get; set; } = true;
+    /// <summary>Windows 版默认走「选区后先标注」的流程，自动复制是可选的快照模式。</summary>
+    public bool CopyAfterCapture { get; set; }
     public bool SaveToPictures { get; set; }
     public string SaveDirectory { get; set; } = "";
     public bool PinAfterCapture { get; set; }

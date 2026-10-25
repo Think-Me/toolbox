@@ -34,6 +34,12 @@ internal sealed class SettingsContext
     /// <summary>恢复原始 hosts 备份。</summary>
     public required Action RestoreHosts { get; init; }
 
+    /// <summary>
+    /// 同步一条远程规则（网络 IO，**请在后台线程调用**）。
+    /// 返回给用户看的结果说明；规则字段（缓存/ETag/错误）由实现方就地更新。
+    /// </summary>
+    public required Func<HostsRule, string> SyncHostsRule { get; init; }
+
     /// <summary>读 DPAPI 解密后的 AI Key；没有返回空串。</summary>
     public required Func<string> LoadAiKey { get; init; }
 
