@@ -23,6 +23,10 @@ public static class ProxyAssetUpdate
     public static Uri RulesFile(string tag, string name) =>
         new($"https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/{tag}/{name}");
 
+    /// <summary>latest 别名：不查版本号直接拉最新规则（首次播种用）。</summary>
+    public static Uri LatestRulesFile(string name) =>
+        new($"https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/{name}");
+
     /// <summary>从 GitHub release JSON 里取 tag_name（纯函数，可测）。</summary>
     public static string? TagFromReleaseJson(byte[] data)
     {
@@ -68,6 +72,25 @@ public static class ProxyAssetUpdate
             catch { return null; }
         }
         return (TagOf(XrayApi), TagOf(RulesApi));
+    }
+
+    /// <summary>
+    /// geo 规则缺失时自动播种（xray 的路由规则引用 geoip:private / geosite:cn，
+    /// 缺文件直接起不来）。走 latest 别名 URL，不依赖版本查询。
+    /// </summary>
+    public static void EnsureRules(string proxyDirectory, Func<Uri, byte[]> download)
+    {
+        var missing = XrayBootstrap.RuleFiles
+            .Where(name => !File.Exists(Path.Combine(proxyDirectory, name)))
+            .ToList();
+        if (missing.Count == 0) return;
+
+        foreach (var name in missing)
+        {
+            var data = download(LatestRulesFile(name));
+            File.WriteAllBytes(Path.Combine(proxyDirectory, name), data);
+        }
+        File.WriteAllText(Path.Combine(proxyDirectory, RulesVersionStamp), "latest");
     }
 
     /// <summary>

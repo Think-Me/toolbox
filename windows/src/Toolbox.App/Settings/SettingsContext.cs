@@ -1,4 +1,5 @@
 using Toolbox.App.Hotkeys;
+using Toolbox.App.Proxy;
 using Toolbox.Core.Hosts;
 using Toolbox.Core.Infrastructure;
 using Toolbox.Core.Settings;
@@ -45,6 +46,9 @@ internal sealed class SettingsContext
 
     /// <summary>DPAPI 加密保存 AI Key。</summary>
     public required Action<string> SaveAiKey { get; init; }
+
+    /// <summary>代理编排器（代理页签的全部交互走它）。</summary>
+    public required ProxyController Proxy { get; init; }
 
     public required Action<string> Log { get; init; }
 }

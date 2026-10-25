@@ -28,6 +28,12 @@ public sealed class AppPaths
     /// <summary>AI Key 用 DPAPI 加密后单独存，不写进 settings.json。</summary>
     public string AiKeyFile => Path.Combine(RoamingRoot, "ai.key");
 
+    /// <summary>xray 内核 + geo 规则 + config.json 的工作目录（可写，config 要和 geo 同目录）。</summary>
+    public string ProxyDirectory => Path.Combine(LocalRoot, "proxy");
+
+    /// <summary>代理节点库。</summary>
+    public string ProxyLibrary => Path.Combine(RoamingRoot, "proxy", "nodes.json");
+
     public string ClipboardDatabase => Path.Combine(LocalRoot, "clipboard.db");
 
     public string MediaDirectory => Path.Combine(LocalRoot, "media");
@@ -42,6 +48,8 @@ public sealed class AppPaths
     {
         Directory.CreateDirectory(RoamingRoot);
         Directory.CreateDirectory(Path.GetDirectoryName(HostsRules)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(ProxyLibrary)!);
+        Directory.CreateDirectory(ProxyDirectory);
         Directory.CreateDirectory(LocalRoot);
         Directory.CreateDirectory(MediaDirectory);
         Directory.CreateDirectory(LogsDirectory);

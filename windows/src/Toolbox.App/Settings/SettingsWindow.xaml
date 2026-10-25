@@ -45,6 +45,10 @@
             <ContentControl x:Name="CaptureHost" />
         </TabItem>
 
+        <TabItem Header="代理">
+            <ContentControl x:Name="ProxyHost" />
+        </TabItem>
+
         <TabItem Header="翻译">
             <ContentControl x:Name="TranslationHost" />
         </TabItem>

@@ -116,7 +116,7 @@ public static class XrayConfigCompiler
             },
             ProxyProtocolKind.Trojan => new XrayConfig.OutboundSettings
             {
-                Servers = [new XrayConfig.TrojanServer(node.Password, node.Name)],
+                Servers = [new XrayConfig.TrojanServer(node.Server, node.Port, node.Password, node.Name)],
             },
             _ => new XrayConfig.OutboundSettings
             {
@@ -258,7 +258,8 @@ public sealed class XrayConfig
 
     public sealed record VNext(string Address, int Port, List<VNextUser> Users);
     public sealed record VNextUser(string Id, int? AlterId, string? Security, string? Encryption, string? Flow);
-    public sealed record TrojanServer(string Password, string? Email);
+    /// <summary>xray 的 trojan outbound 每台服务器必须自带 address/port（实测缺了报 "Trojan server address is not set"）。</summary>
+    public sealed record TrojanServer(string Address, int Port, string Password, string? Email);
 
     public sealed record StreamSettings(
         string Network,

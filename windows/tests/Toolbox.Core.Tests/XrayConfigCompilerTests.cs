@@ -182,4 +182,23 @@ public sealed class XrayConfigCompilerTests
         Assert.Equal("aes-256-gcm", settings.GetProperty("method").GetString());
         Assert.Equal("pw", settings.GetProperty("password").GetString());
     }
+
+    /// <summary>xray 的 trojan outbound servers[] 必须自带 address/port（实测缺了起不来）。</summary>
+    [Fact]
+    public void TrojanServersCarryAddressAndPort()
+    {
+        var trojan = new ProxyNode
+        {
+            Kind = ProxyProtocolKind.Trojan,
+            Server = "t.example.com",
+            Port = 443,
+            Password = "pw",
+        };
+        var root = CompileJson(trojan, Runtime);
+
+        var server = root.GetProperty("outbounds")[0].GetProperty("settings").GetProperty("servers")[0];
+        Assert.Equal("t.example.com", server.GetProperty("address").GetString());
+        Assert.Equal(443, server.GetProperty("port").GetInt32());
+        Assert.Equal("pw", server.GetProperty("password").GetString());
+    }
 }

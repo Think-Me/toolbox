@@ -12,6 +12,7 @@ using Toolbox.App.Capture;
 using Toolbox.App.Diagnostics;
 using Toolbox.App.Hotkeys;
 using Toolbox.App.Hosts;
+using Toolbox.App.Proxy;
 using Toolbox.App.Settings;
 using Toolbox.App.Shell;
 using Toolbox.App.Translation;
@@ -50,6 +51,7 @@ public partial class App : Application
     private HostsStore? _hostsStore;
     private HostsLibrary _hostsLibrary = new();
     private PinManager? _pinManager;
+    private ProxyController? _proxyController;
     private bool _applyingHosts;
     private DispatcherTimer? _clipboardCoalesce;
 
@@ -132,6 +134,8 @@ public partial class App : Application
         _hostsStore = new HostsStore(_paths.HostsRules);
         _hostsLibrary = _hostsStore.Load();
 
+        _proxyController = new ProxyController(_paths, message => _log?.Info(message));
+
         _sink.ClipboardUpdated = OnClipboardUpdated;
         if (!NativeMethods.AddClipboardFormatListener(_sink.Handle))
             _log?.Error("注册剪贴板监听失败，历史采集不可用");
@@ -170,6 +174,9 @@ public partial class App : Application
             ReportStatus,
             (manager, updateInfo) => manager.ApplyUpdatesAndRestart(updateInfo));
         updateService.CheckForUpdates();
+
+        // 代理内核：有可用节点就自动拉起（不碰系统代理；探针模式已在上面 return）
+        _proxyController.AutoStartIfPossible();
 
         _log?.Info($"骨架就绪：托盘={trayInstalled} 热键 {TotalHotkeys - failures.Count}/{TotalHotkeys}");
     }
@@ -681,6 +688,7 @@ public partial class App : Application
             ReportStatus(outcome.Ok ? outcome.Message : $"恢复 hosts 失败：{outcome.Message}");
         }),
         SyncHostsRule = SyncHostsRule,
+        Proxy = _proxyController!,
         Log = message => _log?.Info(message),
     };
 
@@ -866,6 +874,8 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // 系统代理指着一个死端口 = 全网打不开，必须先恢复再拆引擎
+        _proxyController?.Shutdown();
         // 注销热键要在窗口销毁之前：Handle 没了再注销会失败，键位就留在系统里被"占着"。
         _hotkeys?.UnregisterAll();
         if (_sink is not null) NativeMethods.RemoveClipboardFormatListener(_sink.Handle);

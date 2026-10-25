@@ -31,6 +31,7 @@ internal partial class SettingsWindow : Window
         HostsHost.Content = new HostsTab(context);
         ClipboardHost.Content = new ClipboardTab(context.Settings.Clipboard, () => context.SaveSettings());
         CaptureHost.Content = new CaptureTab(context.Settings.Capture, () => context.SaveSettings());
+        ProxyHost.Content = new Toolbox.App.Proxy.ProxyTab(context.Proxy);
 
         BuildHotkeyRows();
         ShowHotkeyFailures(context.Failures);
