@@ -380,6 +380,9 @@ internal static class NativeMethods
     public static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, IntPtr extraInfo);
 
     [DllImport("user32.dll")]
+    public static extern short GetKeyState(byte virtualKey);
+
+    [DllImport("user32.dll")]
     public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
 
     [DllImport("kernel32.dll")]
@@ -392,11 +395,19 @@ internal static class NativeMethods
     /// 把窗口强制带到前台。托盘后台进程 Show() 的新窗口受 Windows 前台锁限制：
     /// 抢不到前台就会被当前前台窗口（全屏 IDE/浏览器都算）压住——
     /// 用户的表现就是「热键按了像没反应」（实测 codeg 全屏 WebView 盖着时复现）。
-    /// 注册热键的进程本来就有 SetForegroundWindow 权限，这里再加
-    /// AttachThreadInput 借用前台线程 + ALT 技巧双保险。
+    /// 注册热键的进程本来就有 SetForegroundWindow 权限，AttachThreadInput
+    /// 借用前台线程提高成功率。
+    ///
+    /// **不要用 ALT 技巧**（keybd_event 注入 ALT 再抬起）：实测 ALT-up 会被
+    /// 安全软件吞掉，系统从此卡在 Alt 按住状态——之后所有鼠标点击都变成
+    /// Alt+点击，截图工具栏整个失效（用户实测「框能出来但工具都用不了」）。
     /// </summary>
     public static void ForceForeground(IntPtr window)
     {
+        // 防御：如果上次异常留下了卡住的 Alt，先补一个抬起
+        if ((GetKeyState(VkMenu) & 0x8000) != 0)
+            keybd_event(VkMenu, 0, KeyeventfKeyup, IntPtr.Zero);
+
         var foreground = GetForegroundWindow();
         GetWindowThreadProcessId(foreground, out var foregroundThread);
         var thisThread = GetCurrentThreadId();
@@ -411,11 +422,6 @@ internal static class NativeMethods
         {
             if (attached) AttachThreadInput(thisThread, foregroundThread, false);
         }
-
-        // 兜底：ALT 技巧——系统对「用户刚按过 Alt」的进程放宽前台锁
-        keybd_event(VkMenu, 0, 0, IntPtr.Zero);
-        SetForegroundWindow(window);
-        keybd_event(VkMenu, 0, KeyeventfKeyup, IntPtr.Zero);
     }
 
     public delegate bool EnumWindowsProc(IntPtr window, IntPtr lParam);    [DllImport("user32.dll")]

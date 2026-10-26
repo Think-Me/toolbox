@@ -51,6 +51,7 @@ public partial class App : Application
     private HostsStore? _hostsStore;
     private HostsLibrary _hostsLibrary = new();
     private PinManager? _pinManager;
+    private CaptureOverlay? _captureOverlay;
     private ProxyController? _proxyController;
     private bool _applyingHosts;
     private DispatcherTimer? _clipboardCoalesce;
@@ -387,6 +388,14 @@ public partial class App : Application
     /// <summary>区域截图：冻结整个虚拟桌面（多显示器拼一张），再盖遮罩窗划选区。</summary>
     private void StartCapture()
     {
+        // 已有遮罩窗开着就复用（置顶激活），否则每次热键都叠一层——
+        // 实测连按两次热键会出现两层遮罩互相干扰，用户点的是上面那层、看的也是上面那层。
+        if (_captureOverlay is { IsLoaded: true })
+        {
+            _captureOverlay.Activate();
+            return;
+        }
+
         _log?.Info("截图：开始抓屏");
         var capture = CaptureService.CaptureVirtualDesktop();
         if (capture is null)
@@ -407,7 +416,12 @@ public partial class App : Application
             ReportStatus,
             _settings.Capture,
             message => _log?.Info(message));
-        overlay.Closed += (_, _) => _pinManager?.RestoreAfterCapture(_settings.Capture.PinsParticipateInCapture);
+        overlay.Closed += (_, _) =>
+        {
+            _captureOverlay = null;
+            _pinManager?.RestoreAfterCapture(_settings.Capture.PinsParticipateInCapture);
+        };
+        _captureOverlay = overlay;
         overlay.Show();
         _log?.Info($"截图：遮罩窗已显示 visible={overlay.IsVisible}");
     }
