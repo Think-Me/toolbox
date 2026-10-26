@@ -60,6 +60,7 @@ internal sealed class CaptureOverlay : Window
     private readonly Canvas _previewCanvas;
     private readonly StackPanel _toolPanel;
     private readonly StackPanel _actionPanel;
+    private readonly StackPanel _toolbar;
     private readonly Dictionary<CaptureTool, Button> _toolButtons = new();
 
     private Point _start;
@@ -183,8 +184,19 @@ internal sealed class CaptureOverlay : Window
             FontSize = 12,
             Visibility = Visibility.Collapsed,
         };
+        // 两行工具栏收进一个垂直容器：行间由布局自动堆叠。
+        // 之前分开定位两行时用了刚显示时的 ActualHeight（还是 0），
+        // 第二行直接叠在第一行上——用户实测「操作项都重叠了」。
         _toolPanel = BuildToolPanel();
         _actionPanel = BuildActionPanel();
+        _toolbar = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
+            Background = Brushes.White,
+            Visibility = Visibility.Collapsed,
+        };
+        _toolbar.Children.Add(_toolPanel);
+        _toolbar.Children.Add(_actionPanel);
 
         // 悬停高亮：鼠标下方的完整窗口（智能选窗目标）
         _hoverHighlight = new Rectangle
@@ -205,7 +217,7 @@ internal sealed class CaptureOverlay : Window
                  {
                      _dark, _frozen, _regionImage, _selectionRect, _hoverHighlight,
                      _previewCanvas, _editCanvas, _sizeHint, _guideV, _guideH, _loupe,
-                     _toolPanel, _actionPanel,
+                     _toolbar,
                  })
             canvas.Children.Add(element);
         Content = canvas;
@@ -247,19 +259,23 @@ internal sealed class CaptureOverlay : Window
         NativeMethods.SetWindowPos(hwnd, NativeMethods.HwndTopmost, 0, 0, 0, 0,
             NativeMethods.SwpNoMove | NativeMethods.SwpNoSize | NativeMethods.SwpShowWindow);
         NativeMethods.ForceForeground(hwnd);
+        HwndSource.FromHwnd(hwnd)?.AddHook(WndProcHook);
         _trace?.Invoke("遮罩已置顶并强制前台");
+    }
+
+    /// <summary>诊断钩子：记录鼠标按键消息到达 WPF 窗口过程的时刻（自动化测试用）。</summary>
+    private IntPtr WndProcHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg is 0x0201 or 0x0202)   // WM_LBUTTONDOWN / WM_LBUTTONUP
+            _trace?.Invoke($"遮罩 WndProc msg=0x{msg:X} pos=({lParam.ToInt32() & 0xFFFF},{(lParam.ToInt32() >> 16) & 0xFFFF})");
+        return IntPtr.Zero;
     }
 
     // ---- 工具栏 ----
 
     private StackPanel BuildToolPanel()
     {
-        var panel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Background = Brushes.White,
-            Visibility = Visibility.Collapsed,
-        };
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(4, 4, 4, 0) };
 
         void AddTool(CaptureTool tool, string label)
         {
@@ -284,12 +300,7 @@ internal sealed class CaptureOverlay : Window
 
     private StackPanel BuildActionPanel()
     {
-        var panel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Background = Brushes.White,
-            Visibility = Visibility.Collapsed,
-        };
+        var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(4, 4, 4, 4) };
 
         Button button(string label, RoutedEventHandler onClick) =>
             new() { Content = label, Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(2, 2, 2, 2) };
@@ -430,8 +441,7 @@ internal sealed class CaptureOverlay : Window
             _hoverHighlight.Visibility = Visibility.Collapsed;
             _selectionRect.Visibility = Visibility.Visible;
             _frozen.Visibility = Visibility.Visible;
-            _toolPanel.Visibility = Visibility.Collapsed;
-            _actionPanel.Visibility = Visibility.Collapsed;
+            _toolbar.Visibility = Visibility.Collapsed;
             UpdateSelection(point);
             CaptureMouse();
             return;
@@ -745,26 +755,29 @@ internal sealed class CaptureOverlay : Window
         _regionImage.Height = _selection.Height;
         _regionImage.Visibility = Visibility.Visible;
 
-        _toolPanel.Visibility = Visibility.Visible;
-        _actionPanel.Visibility = Visibility.Visible;
+        _toolbar.Visibility = Visibility.Visible;
         SelectTool(CaptureTool.Rectangle);
         ShowPanels();
         RunAutomaticActions();
     }
 
+    /// <summary>
+    /// 工具栏定位在选区下方；放不下翻到选区上方。
+    /// 前提是布局已经算过（否则 ActualHeight = 0，两行会叠在一起）。
+    /// </summary>
     private void ShowPanels()
     {
-        var scale = _capture.DpiScale;
-        var left = Math.Clamp(_selection.X + _selection.Width - 300, 4, ActualWidth - 304);
-        var bottom = _selection.Y + _selection.Height + 8;
-        var panelHeight = _toolPanel.ActualHeight + _actionPanel.ActualHeight + 12;
-        var fits = bottom + panelHeight < ActualHeight;
-        var top = fits ? bottom : Math.Max(4, _selection.Y - panelHeight - 8);
+        _toolbar.UpdateLayout();
 
-        Canvas.SetLeft(_toolPanel, left);
-        Canvas.SetTop(_toolPanel, top);
-        Canvas.SetLeft(_actionPanel, left);
-        Canvas.SetTop(_actionPanel, top + _toolPanel.ActualHeight + 6);
+        var scale = _capture.DpiScale;
+        var left = Math.Clamp(_selection.X + _selection.Width - _toolbar.ActualWidth,
+            4, Math.Max(4, ActualWidth - _toolbar.ActualWidth - 4));
+        var below = _selection.Y + _selection.Height + 8;
+        var fits = below + _toolbar.ActualHeight + 8 < ActualHeight;
+        var top = fits ? below : Math.Max(4, _selection.Y - _toolbar.ActualHeight - 8);
+
+        Canvas.SetLeft(_toolbar, left);
+        Canvas.SetTop(_toolbar, top);
     }
 
     private void RenderAnnotations()
