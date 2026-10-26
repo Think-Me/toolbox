@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -124,6 +125,13 @@ internal partial class SettingsWindow : Window
     {
         // 每次打开都回读注册表：用户可能在任务管理器里改过
         LaunchAtLoginCheck.IsChecked = LoginItem.IsEnabled();
+
+        // 版本： assembly 的 InformationalVersion 优先（构建时可注入），否则 AssemblyVersion
+        var assembly = typeof(SettingsWindow).Assembly;
+        var informational = assembly.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+        VersionText.Text = "v" + (string.IsNullOrEmpty(informational) ? assembly.GetName().Version?.ToString(3) : informational);
+
         PathsText.Text = string.Join(Environment.NewLine,
             $"设置：{_context.Paths.Settings}",
             $"日志：{_context.Paths.LogsDirectory}",

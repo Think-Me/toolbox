@@ -27,6 +27,14 @@
                                Foreground="#B00020" TextWrapping="Wrap" />
 
                     <Separator Margin="0,16" />
+                    <TextBlock Text="关于" FontWeight="SemiBold" />
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="Toolbox for Windows" VerticalAlignment="Center" />
+                        <TextBlock x:Name="VersionText" Margin="8,0,0,0"
+                                   VerticalAlignment="Center" Foreground="#666" />
+                    </StackPanel>
+
+                    <Separator Margin="0,16" />
                     <TextBlock Text="文件位置" FontWeight="SemiBold" />
                     <TextBlock x:Name="PathsText" Margin="0,6,0,0" Foreground="#666" TextWrapping="Wrap" />
                 </StackPanel>
