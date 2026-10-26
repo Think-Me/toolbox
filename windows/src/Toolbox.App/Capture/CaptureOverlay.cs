@@ -468,6 +468,18 @@ internal sealed class CaptureOverlay : Window
 
         DeselectAnnotation();
         _start = ClampToSelection(point);
+
+        // 文字工具：弹输入框，不拖拽也**不捕获鼠标**。
+        // 之前先 CaptureMouse 再弹框且从不释放——窗口占住捕获后所有鼠标事件
+        // 都路由给窗口：工具按钮切不动、复制/贴图/保存全失灵、点一下框还
+        // 会再叠一个输入框（用户实测三个症状全是它）。
+        if (_activeTool == CaptureTool.Text)
+        {
+            _dragging = false;
+            ShowTextBox(_start);
+            return;
+        }
+
         _dragging = true;
         CaptureMouse();
 
@@ -505,11 +517,6 @@ internal sealed class CaptureOverlay : Window
                     Stroke = NoteBrush,
                     StrokeThickness = 1,
                 }, _start);
-                break;
-            case CaptureTool.Text:
-                // 文字不需要拖拽：落点弹输入框，回车提交
-                _dragging = false;
-                ShowTextBox(_start);
                 break;
         }
     }
@@ -650,7 +657,8 @@ internal sealed class CaptureOverlay : Window
         Canvas.SetLeft(box, position.X);
         Canvas.SetTop(box, position.Y);
         _previewCanvas.Children.Add(box);
-        box.Focus();
+        box.Focus();                    // 拿到键盘焦点，落点直接打字
+        System.Windows.Input.Keyboard.Focus(box);
 
         void Commit()
         {
