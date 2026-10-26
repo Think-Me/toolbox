@@ -305,16 +305,17 @@ internal sealed class CaptureOverlay : Window
         Button button(string label, RoutedEventHandler onClick) =>
             new() { Content = label, Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(2, 2, 2, 2) };
 
-        panel.Children.Add(button("复制", (_, _) => CopySelection()));
-        panel.Children.Add(button("贴图", (_, _) => PinSelection()));
-        panel.Children.Add(button("保存", (_, _) => SaveSelection()));
-        panel.Children.Add(button("取消", (_, _) => Close()));
+        panel.Children.Add(button("复制", (_, _) => { _trace?.Invoke("动作按钮 复制"); CopySelection(); }));
+        panel.Children.Add(button("贴图", (_, _) => { _trace?.Invoke("动作按钮 贴图"); PinSelection(); }));
+        panel.Children.Add(button("保存", (_, _) => { _trace?.Invoke("动作按钮 保存"); SaveSelection(); }));
+        panel.Children.Add(button("取消", (_, _) => { _trace?.Invoke("动作按钮 取消"); Close(); }));
         return panel;
     }
 
     private void SelectTool(CaptureTool tool)
     {
         _activeTool = _activeTool == tool ? CaptureTool.None : tool;
+        _trace?.Invoke($"工具切换 → {_activeTool}");
         SyncToolbar();
     }
 
@@ -604,27 +605,33 @@ internal sealed class CaptureOverlay : Window
         }
 
         var end = ClampToSelection(e.GetPosition(this));
+        // 标注统一存**选区局部**坐标：渲染画布就是选区大小，
+        // 存遮罩窗坐标会画到画布外（全部不可见），马赛克裁剪还会越界崩溃
         switch (_activeTool)
         {
             case CaptureTool.Rectangle:
-                CommitPreview(new RectNote(RectFrom(_start, end)));
+                CommitPreview(new RectNote(ToLocalRect(RectFrom(_start, end))));
                 break;
             case CaptureTool.Ellipse:
-                CommitPreview(new EllipseNote(RectFrom(_start, end)));
+                CommitPreview(new EllipseNote(ToLocalRect(RectFrom(_start, end))));
                 break;
             case CaptureTool.Mosaic:
-                CommitPreview(new MosaicNote(RectFrom(_start, end)));
+                CommitPreview(new MosaicNote(ToLocalRect(RectFrom(_start, end))));
                 break;
             case CaptureTool.Arrow:
-                CommitPreview(new ArrowNote(_start, end));
+                CommitPreview(new ArrowNote(ToLocalPoint(_start), ToLocalPoint(end)));
                 break;
             case CaptureTool.Pen:
-                if (_penPoints.Count >= 2) CommitPreview(new PenNote(_penPoints));
+                if (_penPoints.Count >= 2)
+                    CommitPreview(new PenNote(_penPoints.Select(ToLocalPoint).ToList()));
                 else ClearPreview();
                 _penPoints = [];
                 break;
         }
     }
+
+    private Point ToLocalPoint(Point p) => new(p.X - _selection.X, p.Y - _selection.Y);
+    private Rect ToLocalRect(Rect r) => new(r.X - _selection.X, r.Y - _selection.Y, r.Width, r.Height);
 
     /// <summary>文字标注：落点放一个输入框，Enter 提交、Esc 或空文本取消。</summary>
     private void ShowTextBox(Point position)
@@ -652,7 +659,7 @@ internal sealed class CaptureOverlay : Window
             if (_previewCanvas.Children.Count == 0) _previewCanvas.Visibility = Visibility.Collapsed;
             if (text.Length > 0)
             {
-                _annotations.Add(new TextNote(position, text));
+                _annotations.Add(new TextNote(ToLocalPoint(position), text));
                 RenderAnnotations();
                 _selectedAnnotation = _annotations.Count - 1;
                 _editIndex = _selectedAnnotation.Value;
@@ -756,7 +763,11 @@ internal sealed class CaptureOverlay : Window
         _regionImage.Visibility = Visibility.Visible;
 
         _toolbar.Visibility = Visibility.Visible;
-        SelectTool(CaptureTool.Rectangle);
+        // 默认激活矩形工具。注意不能用 SelectTool（toggle 语义）：
+        // _activeTool 字段初始值就是 Rectangle，再 toggle 一次会变成 None——
+        // 用户实测「选区能画、工具全都没反应」就是这个原因。
+        _activeTool = CaptureTool.Rectangle;
+        SyncToolbar();
         ShowPanels();
         RunAutomaticActions();
     }
@@ -778,6 +789,7 @@ internal sealed class CaptureOverlay : Window
 
         Canvas.SetLeft(_toolbar, left);
         Canvas.SetTop(_toolbar, top);
+        _trace?.Invoke($"工具栏 size={_toolbar.ActualWidth:0}x{_toolbar.ActualHeight:0} at {left:0},{top:0} 工具行高={_toolPanel.ActualHeight:0}");
     }
 
     private void RenderAnnotations()
@@ -793,7 +805,17 @@ internal sealed class CaptureOverlay : Window
         {
             dc.DrawImage(_baseCropped, new Rect(0, 0, width, height));
             foreach (var annotation in _annotations)
-                DrawAnnotation(dc, annotation, scale);
+            {
+                try
+                {
+                    DrawAnnotation(dc, annotation, scale);
+                }
+                catch (Exception error)
+                {
+                    // 一个坏标注不能带崩整个渲染管线（此前马赛克越界让所有工具"全部失效"）
+                    _trace?.Invoke($"标注渲染失败 {annotation.GetType().Name}: {error.Message}");
+                }
+            }
         }
 
         var rtb = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
@@ -870,8 +892,13 @@ internal sealed class CaptureOverlay : Window
             {
                 var mosaicSource = EnsureMosaic();
                 if (mosaicSource is null) break;
+                // 裁剪矩形钳到源图内：一个越界标注不能带崩整个渲染管线
                 var rectPx = ToPixels(mosaic.R, scale);
-                var region = new CroppedBitmap(mosaicSource, rectPx);
+                var left = Math.Clamp(rectPx.X, 0, Math.Max(0, mosaicSource.PixelWidth - 1));
+                var top = Math.Clamp(rectPx.Y, 0, Math.Max(0, mosaicSource.PixelHeight - 1));
+                var width = Math.Clamp(rectPx.Width, 1, mosaicSource.PixelWidth - left);
+                var height = Math.Clamp(rectPx.Height, 1, mosaicSource.PixelHeight - top);
+                var region = new CroppedBitmap(mosaicSource, new Int32Rect(left, top, width, height));
                 dc.DrawImage(region, Scale(mosaic.R, scale));
                 break;
             }
@@ -1126,8 +1153,9 @@ internal sealed class CaptureOverlay : Window
         }
 
         var bounds = AnnotationBoundsOf(_annotations[index]);
-        Canvas.SetLeft(_editFrame, bounds.Left);
-        Canvas.SetTop(_editFrame, bounds.Top);
+        // 标注存的是选区局部坐标，编辑框画在整窗画布上要加回选区原点
+        Canvas.SetLeft(_editFrame, bounds.Left + _selection.X);
+        Canvas.SetTop(_editFrame, bounds.Top + _selection.Y);
         _editFrame.Width = bounds.Width;
         _editFrame.Height = bounds.Height;
         _editFrame.Visibility = Visibility.Visible;
@@ -1139,8 +1167,8 @@ internal sealed class CaptureOverlay : Window
         {
             var handle = _editHandles[corner];
             handle.Visibility = resizable ? Visibility.Visible : Visibility.Collapsed;
-            Canvas.SetLeft(handle, x - handle.Width / 2);
-            Canvas.SetTop(handle, y - handle.Height / 2);
+            Canvas.SetLeft(handle, x + _selection.X - handle.Width / 2);
+            Canvas.SetTop(handle, y + _selection.Y - handle.Height / 2);
         }
 
         _editCanvas.Visibility = Visibility.Visible;
@@ -1184,7 +1212,11 @@ internal sealed class CaptureOverlay : Window
     private bool DoCopy()
     {
         var image = ExportImage();
-        if (image is null) return false;
+        if (image is null)
+        {
+            _trace?.Invoke("复制失败：画布为空");
+            return false;
+        }
         try
         {
             // 截图复制是真实复制，应该进历史，不打自写标记
@@ -1208,8 +1240,13 @@ internal sealed class CaptureOverlay : Window
     private bool DoPin()
     {
         var image = ExportImage();
-        if (image is null) return false;
+        if (image is null)
+        {
+            _trace?.Invoke("贴图失败：画布为空");
+            return false;
+        }
         _onPin(image, SelectionScreenRect());
+        _trace?.Invoke($"已贴图 {image.PixelWidth}x{image.PixelHeight}");
         return true;
     }
 

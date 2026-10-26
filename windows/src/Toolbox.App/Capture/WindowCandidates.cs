@@ -38,15 +38,24 @@ internal static class WindowCandidates
         return rects;
     }
 
-    /// <summary>屏幕像素矩形 -> 遮罩视图 DIP 矩形。</summary>
+    /// <summary>屏幕像素矩形 -> 遮罩视图 DIP 矩形。裁剪到屏幕内：最大化窗口有 8px 屏幕外溢出，
+    /// 不裁的话智能选窗会选中一个超出截图范围的选区，后续裁剪直接越界。</summary>
     public static List<SnapRect> ToOverlayDip(IEnumerable<NativeMethods.Rect2> rects,
-                                              NativeMethods.Rect2 monitor, double scale) =>
-        rects.Select(r => new SnapRect(
-                (r.Left - monitor.Left) / scale,
-                (r.Top - monitor.Top) / scale,
-                (r.Right - r.Left) / scale,
-                (r.Bottom - r.Top) / scale))
+                                              NativeMethods.Rect2 monitor, double scale)
+    {
+        var screenRight = monitor.Right - monitor.Left;
+        var screenBottom = monitor.Bottom - monitor.Top;
+        return rects.Select(r =>
+            {
+                var left = Math.Max(0, r.Left - monitor.Left);
+                var top = Math.Max(0, r.Top - monitor.Top);
+                var right = Math.Min(screenRight, r.Right - monitor.Left);
+                var bottom = Math.Min(screenBottom, r.Bottom - monitor.Top);
+                return new SnapRect(left / scale, top / scale,
+                    Math.Max(1, (right - left) / scale), Math.Max(1, (bottom - top) / scale));
+            })
             .ToList();
+    }
 
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
