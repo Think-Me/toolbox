@@ -123,7 +123,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var pasteSimulator = PasteSimulator(
         driver: SystemPasteDriver(),
         imageLoader: { [media] sha in try? media.data(sha: sha) },
-        tracker: selfWrites)
+        tracker: selfWrites,
+        bundleStale: { BundleIntegrity.shared.isStale })
     lazy var clipboardPanel = ClipboardPanelController(
         store: clipboardStore, media: media, simulator: pasteSimulator,
         settings: { [weak self] in self?.model.settings ?? .default })

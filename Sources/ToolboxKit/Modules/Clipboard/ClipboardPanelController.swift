@@ -225,6 +225,8 @@ public final class ClipboardPanelController: NSResponder {
             return "已复制，未自动粘贴：找不到原来的 App，请手动 ⌘V"
         case .timedOut:
             return "已复制，未自动粘贴：切换前台超时，请手动 ⌘V"
+        case .bundleReplaced:
+            return "已复制，未自动粘贴：App 文件已被替换（刚重新构建/安装过），重启 Toolbox 即恢复"
         }
     }
 

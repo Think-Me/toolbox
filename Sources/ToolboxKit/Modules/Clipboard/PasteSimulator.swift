@@ -19,6 +19,8 @@ public enum PasteOutcome: Equatable {
         case accessibilityNotGranted
         case targetAppUnknown
         case timedOut
+        /// 运行中的进程脚下 bundle 被替换/删除，注入事件已被系统丢弃（见 BundleIntegrity）。
+        case bundleReplaced
     }
 }
 
@@ -31,16 +33,19 @@ public final class PasteSimulator {
     /// 图片条目要读 MediaStore 里的实体。用闭包注入，避免 Core 层反向依赖模块实现。
     private let imageLoader: (String) -> Data?
     private let tracker: SelfWriteTracker?
+    private let bundleStale: () -> Bool
 
     public init(driver: any PasteDriving, pasteboard: NSPasteboard = .general,
                 accessibilityTrusted: @escaping () -> Bool = { AXIsProcessTrusted() },
                 imageLoader: @escaping (String) -> Data? = { _ in nil },
-                tracker: SelfWriteTracker? = nil) {
+                tracker: SelfWriteTracker? = nil,
+                bundleStale: @escaping () -> Bool = { false }) {
         self.driver = driver
         self.pasteboard = pasteboard
         self.accessibilityTrusted = accessibilityTrusted
         self.imageLoader = imageLoader
         self.tracker = tracker
+        self.bundleStale = bundleStale
     }
 
     /// `prepare`：在**发粘贴按键之前**、写完剪贴板之后调用。
@@ -77,6 +82,9 @@ public final class PasteSimulator {
         }
         if !accessibilityTrusted() { return .copiedOnly(.accessibilityNotGranted) }
         guard let app else { return .copiedOnly(.targetAppUnknown) }
+        // bundle 在运行中被替换/删除过 → 合成按键已被系统静默丢弃，
+        // 再发下去只会假装成功；直接明说让用户重启（见 BundleIntegrity）。
+        if bundleStale() { return .copiedOnly(.bundleReplaced) }
 
         // 不再因"全局安全输入开启"而跳过自动粘贴：那个判断是全系统粒度，
         // 常被无关 App（终端、密码管理器）误置，导致普通密码框也粘不上。

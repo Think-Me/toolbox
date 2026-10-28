@@ -139,6 +139,11 @@ public final class TranslationPanelController {
 
     private func replaceSelection() {
         guard let capture, let text = model.output else { return }
+        if BundleIntegrity.shared.isStale {
+            // 运行中被替换过 bundle，注入按键已被系统丢弃（见 BundleIntegrity）。
+            DegradeNotice.shared.show("App 文件已被替换，合成按键失效；可先手动复制译文，重启 Toolbox 即恢复")
+            return
+        }
         if reader.replace(capture, with: text) {
             PanelPresenter.shared.dismissCurrent(reason: .chose)
         } else {

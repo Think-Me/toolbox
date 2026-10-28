@@ -27,14 +27,16 @@ private final class FakeDriver: PasteDriving {
 
 @MainActor
 private func makeSimulator(trusted: Bool = true,
-                           images: [String: Data] = [:])
+                           images: [String: Data] = [:],
+                           stale: Bool = false)
     -> (PasteSimulator, FakeDriver, NSPasteboard) {
     let driver = FakeDriver()
     // 命名 pasteboard：测试绝不能污染用户真实剪贴板
     let pb = NSPasteboard(name: .init("toolbox.paste-test.\(UUID().uuidString)"))
     let sim = PasteSimulator(driver: driver, pasteboard: pb,
                              accessibilityTrusted: { trusted },
-                             imageLoader: { images[$0] })
+                             imageLoader: { images[$0] },
+                             bundleStale: { stale })
     return (sim, driver, pb)
 }
 
@@ -170,5 +172,21 @@ private func textItem(_ s: String) -> ClipboardItem {
     // prepare 是可选参数：不传时行为不变（有测试挡住，免得以后误改成必选）
     let (sim, driver, _) = makeSimulator()
     #expect(await sim.paste(textItem("x"), into: .current) == .pasted)
+    #expect(driver.calls == ["activate", "keystroke"])
+}
+
+@MainActor @Test func replacedBundleDegradesWithExplicitHint() async {
+    // make app/dmg 换掉正在运行的 bundle 后：内容照常复制，但绝不假装粘贴成功
+    let (sim, driver, pb) = makeSimulator(stale: true)
+    let outcome = await sim.paste(textItem("z"), into: NSRunningApplication.current)
+    #expect(outcome == .copiedOnly(.bundleReplaced))
+    #expect(driver.calls.isEmpty)                        // 不切前台、不发键
+    #expect(pb.string(forType: .string) == "z")          // 用户手动 ⌘V 仍有内容
+}
+
+@MainActor @Test func normalPasteIgnoresStaleGateWhenIntact() async {
+    // 回归护栏：默认注入的 gate 不许影响正常路径
+    let (sim, driver, _) = makeSimulator()
+    #expect(await sim.paste(textItem("ok"), into: NSRunningApplication.current) == .pasted)
     #expect(driver.calls == ["activate", "keystroke"])
 }

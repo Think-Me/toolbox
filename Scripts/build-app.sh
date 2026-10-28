@@ -59,3 +59,17 @@ else
 fi
 codesign --verify --verbose=2 "$APP" 2>&1 | tail -2
 echo "built $APP  (bin: $BIN)"
+
+# ── 防僵尸实例：只处理"从本路径启动"的旧进程 ────────────────────────────────
+# bundle 被 rm -rf 重建后，旧进程还能跑但合成事件已被系统静默丢弃
+# （TCC 看似仍授权，排查成本极高，见 BundleIntegrity 注释）。
+# 从 Build/ 这里启动的实例直接杀掉换新的；装在 /Applications 等别处的不受影响。
+EXE="$APP/Contents/MacOS/Toolbox"
+OLD="$(pgrep -f "$EXE" || true)"
+if [ -n "$OLD" ]; then
+    echo "⚠️ 检测到从 $APP 启动的旧实例（pid: ${OLD//$'\n'/ }），正在重启到新构建…"
+    kill $OLD 2>/dev/null || true
+    sleep 1
+    open "$APP"
+    echo "✅ 已重启到新版本"
+fi
