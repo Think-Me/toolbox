@@ -6,7 +6,12 @@ import AppKit
 /// 于是 `makeKeyAndOrderFront` 之后它拿不到键盘焦点，
 /// 表现就是"能拖选区、但回车/Esc/方向键全都没反应"（M0 在浮层上踩过同一个坑）。
 @MainActor
-final class OverlayWindow: NSWindow {
+/// 遮罩必须是 **nonactivating panel**：普通 NSWindow 的 makeKeyAndOrderFront
+/// 会激活本 App，macOS 随之把显示器从全屏 App 的 Space 切回桌面 Space——
+/// 遮罩就成了"一张屏幕拷贝 + 阴影"浮在真实全屏窗口前面（全屏 Chrome 里截图实测）。
+/// nonactivating panel 的 makeKey 不激活 App，Space 不切换，遮罩直接落在
+/// 全屏 Space 上（配合 .fullScreenAuxiliary）。
+final class OverlayWindow: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
@@ -93,18 +98,28 @@ public final class SelectionOverlayController {
                     }
                 }
                 let w = OverlayWindow(contentRect: frame.screenFrameInPoints,
-                                      styleMask: [.borderless],
+                                      styleMask: [.borderless, .nonactivatingPanel],
                                       backing: .buffered, defer: false)
                 w.level = .screenSaver
                 w.isOpaque = true
                 w.backgroundColor = .black
                 w.ignoresMouseEvents = false
+                // NSPanel 默认 true：App 未激活就隐藏自己。遮罩恰恰要在
+                // "App 不激活"的状态下活着，必须关掉。
+                w.hidesOnDeactivate = false
+                // 注意顺序：isFloatingPanel=true 会把 level 重置成 .floating(3)，
+                // 必须先设它、再把 level 拉回 screenSaver。
+                w.isFloatingPanel = true
+                w.level = .screenSaver
                 w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
                 w.contentView = v
                 v.onCommit = { [weak self] kind in self?.handle(kind) }
                 self.window = w
                 self.view = v
-                w.makeKeyAndOrderFront(nil)
+                // 顺序有讲究：先上屏再 makeKey。nonactivating panel 的
+                // makeKey 不会激活 App → 不触发 Space 切换（见 OverlayWindow 注释）。
+                w.orderFrontRegardless()
+                w.makeKey()
                 w.makeFirstResponder(v)
                 self.presentHook?(v)
             } catch let e as CaptureError {
