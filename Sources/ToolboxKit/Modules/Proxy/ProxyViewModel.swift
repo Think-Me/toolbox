@@ -16,6 +16,8 @@ public final class ProxyViewModel: ObservableObject {
     @Published public var proxyExitIP: String?
     @Published public var directExitIP: String?
     @Published public var exitIPLoading = false
+    /// 每生成一次新配置（启动/重启/换节点/换模式）自增，UI 据此重新探测出口 IP
+    @Published public private(set) var configGeneration = 0
     @Published public var updateInfo: UpdateInfo?
     @Published public var updateBusy = false
     @Published public var updateProgress: Double?
@@ -31,6 +33,8 @@ public final class ProxyViewModel: ObservableObject {
 
     /// 本次运行分配到的 Stats API 端口（随配置一起下发给 xray）
     private(set) var activeAPIPort: Int?
+    /// 仅供出口 IP 探测的 HTTP 端口（路由规则强制走节点）
+    private(set) var activeProbePort: Int?
     private var trafficTask: Task<Void, Never>?
     private var lastTraffic: (counters: TrafficCounters, at: Date)?
 
@@ -135,6 +139,7 @@ public final class ProxyViewModel: ObservableObject {
         let candidates = library.nodes.filter(\.balancerCandidate)
         // 每次重编译都换一个空闲端口，避免固定端口被占用导致内核起不来
         let apiPort = LocalFreePort.allocate()
+        let probePort = LocalFreePort.allocate()
         let data: Data
         if library.runtime.autoSwitch {
             guard !candidates.isEmpty else {
@@ -142,19 +147,24 @@ public final class ProxyViewModel: ObservableObject {
             }
             let node = activeNode ?? candidates[0]
             data = XrayConfigCompiler.compileData(node: node, runtime: library.runtime,
-                                                  candidates: candidates, apiPort: apiPort)
+                                                  candidates: candidates,
+                                                  apiPort: apiPort, probePort: probePort)
         } else {
             guard let node = activeNode else { message = "先添加并选择一个节点"; return nil }
             data = XrayConfigCompiler.compileData(node: node, runtime: library.runtime,
-                                                  apiPort: apiPort)
+                                                  apiPort: apiPort, probePort: probePort)
         }
         activeAPIPort = apiPort
+        activeProbePort = probePort
+        configGeneration += 1
         return data
     }
 
     public func stopEngine() {
         runner.stop()
         activeAPIPort = nil
+        activeProbePort = nil
+        proxyExitIP = nil
         lastTraffic = nil
         if traffic != .zero { traffic = .zero }
     }
@@ -252,21 +262,33 @@ public final class ProxyViewModel: ObservableObject {
     }
 
     /// 同时查直连与（若内核在跑）经代理的出口 IP。
+    /// 直连探测走空 proxy 字典，完全不经过 xray；代理探测走专用的 probe-in 端口。
     public func refreshExitIPs() async {
         guard !exitIPLoading else { return }
         exitIPLoading = true
         let running = isEngineRunning
-        let port = library.runtime.httpPort
         async let directIP = ExitIPProbe.direct()
         let proxyIP: String?
-        if running {
-            proxyIP = await ExitIPProbe.viaProxy(httpPort: port)
+        if running, let probePort = activeProbePort {
+            proxyIP = await proxyExitIPWithRetry(port: probePort)
         } else {
             proxyIP = nil
         }
         directExitIP = await directIP
         proxyExitIP = proxyIP
         exitIPLoading = false
+    }
+
+    /// 内核刚启动时端口可能还没 bind 好，快速失败时补一次重试；
+    /// 真超时（节点不通）则不再叠加等待，避免界面卡很久。
+    private func proxyExitIPWithRetry(port: Int) async -> String? {
+        for attempt in 0..<2 {
+            let start = Date()
+            if let ip = await ExitIPProbe.viaProxy(httpPort: port) { return ip }
+            guard attempt == 0, Date().timeIntervalSince(start) < 1.5 else { return nil }
+            try? await Task.sleep(nanoseconds: 700_000_000)
+        }
+        return nil
     }
 
     // MARK: 更新

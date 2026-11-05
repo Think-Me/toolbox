@@ -25,8 +25,8 @@ struct ProxyTabView: View {
             Task { await vm.refreshExitIPs() }
         }
         .onDisappear { vm.stopTrafficMonitoring() }
-        .onChange(of: vm.engineState) { _, newValue in
-            if case .running = newValue { Task { await vm.refreshExitIPs() } }
+        .onChange(of: vm.configGeneration) { _, _ in
+            Task { await vm.refreshExitIPs() }
         }
     }
 

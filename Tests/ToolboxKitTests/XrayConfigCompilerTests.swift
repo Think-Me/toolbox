@@ -329,6 +329,39 @@ private func vless(_ name: String, _ port: Int) -> ProxyNode {
     #expect((root["inbounds"] as? [[String: Any]])?.count == 2)
 }
 
+// MARK: 出口 IP 探测入口（强制走代理）
+
+@Test func probePortAddsForcedProxyInboundAndRule() {
+    let node = ProxyNode(name: "n", kind: .vmess, server: "s", port: 1, uuid: "u")
+    let data = XrayConfigCompiler.compileData(node: node,
+                                             runtime: .init(routingMode: .bypassMainland),
+                                             probePort: 12000)
+    let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+
+    let inbounds = (root["inbounds"] as? [[String: Any]]) ?? []
+    #expect(inbounds.contains { ($0["tag"] as? String) == "probe-in" && ($0["protocol"] as? String) == "http" })
+
+    let rules = (((root["routing"] as? [String: Any])?["rules"]) as? [[String: Any]]) ?? []
+    let probeRule = rules.first { ($0["inboundTag"] as? [String]) == ["probe-in"] }
+    #expect(probeRule?["outboundTag"] as? String == "proxy")
+    #expect(probeRule?["balancerTag"] == nil)
+    // 必须排在 geosite/geoip 直连规则之前，否则国内端点又会被判直连
+    #expect(rules.first?["inboundTag"] as? [String] == ["probe-in"])
+}
+
+@Test func probeInAutoModeTargetsBalancer() {
+    let cands = [vless("A", 443), vless("B", 8443)]
+    let data = XrayConfigCompiler.compileData(node: cands[0],
+                                             runtime: .init(autoSwitch: true),
+                                             candidates: cands,
+                                             probePort: 12001)
+    let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+    let rules = (((root["routing"] as? [String: Any])?["rules"]) as? [[String: Any]]) ?? []
+    let probeRule = rules.first { ($0["inboundTag"] as? [String]) == ["probe-in"] }
+    #expect(probeRule?["balancerTag"] as? String == "auto")
+    #expect(probeRule?["outboundTag"] == nil)
+}
+
 @Test func configWithAPIPortExposesStatsAPI() throws {
     let repoRoot = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -336,6 +369,7 @@ private func vless(_ name: String, _ port: Int) -> ProxyNode {
     let xray = vendor.appendingPathComponent("xray")
     guard FileManager.default.isExecutableFile(atPath: xray.path) else { return }
     guard let apiPort = LocalFreePort.allocate() else { return }
+    guard let probePort = LocalFreePort.allocate() else { return }
 
     let tmp = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("api-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
@@ -348,7 +382,7 @@ private func vless(_ name: String, _ port: Int) -> ProxyNode {
     let cfg = tmp.appendingPathComponent("config.json")
     try XrayConfigCompiler.compileData(node: node,
         runtime: .init(socksPort: 21170, httpPort: 21171, routingMode: .bypassMainland),
-        apiPort: apiPort).write(to: cfg)
+        apiPort: apiPort, probePort: probePort).write(to: cfg)
 
     let p = Process()
     p.executableURL = xray

@@ -16,9 +16,11 @@ public enum XrayConfigCompiler {
     ///   - node: 当前选中的节点（手动模式用）
     ///   - candidates: 勾选进自动组的节点（自动模式用）
     ///   - apiPort: 非 nil 时额外开启 Stats API（用于读取上下行流量）；nil 保持旧行为
+    ///   - probePort: 非 nil 时额外开启仅供出口 IP 探测的 HTTP 入口，强制走代理、不受路由模式影响
     public static func compile(node: ProxyNode, runtime: ProxyRuntimeSettings,
                                candidates: [ProxyNode] = [],
-                               apiPort: Int? = nil) -> XrayConfig {
+                               apiPort: Int? = nil,
+                               probePort: Int? = nil) -> XrayConfig {
         let group = runtime.autoSwitch ? (candidates.isEmpty ? [node] : candidates) : [node]
         let auto = runtime.autoSwitch && group.count >= 1
         var inbounds: [XrayConfig.Inbound] = [
@@ -34,6 +36,11 @@ public enum XrayConfigCompiler {
                                   tag: "api",
                                   settings: .init(auth: nil, udp: nil, ip: nil, address: "127.0.0.1")))
         }
+        if let probePort {
+            // 只给出口 IP 探测用：路由规则会把它强制指向节点，不经过普通路由判定
+            inbounds.append(.init(port: probePort, protocol: "http", listen: "127.0.0.1",
+                                  tag: "probe-in", settings: nil))
+        }
         return XrayConfig(
             log: .init(loglevel: "warning"),
             stats: (auto || apiPort != nil) ? .init() : nil,
@@ -45,16 +52,18 @@ public enum XrayConfigCompiler {
                 statsOutboundUplink: true, statsOutboundDownlink: true)),
             inbounds: inbounds,
             outbounds: outbounds(group: group, auto: auto, mode: runtime.routingMode),
-            routing: routing(mode: runtime.routingMode, auto: auto, apiEnabled: apiPort != nil))
+            routing: routing(mode: runtime.routingMode, auto: auto,
+                             apiEnabled: apiPort != nil, probeEnabled: probePort != nil))
     }
 
     public static func compileData(node: ProxyNode, runtime: ProxyRuntimeSettings,
                                    candidates: [ProxyNode] = [],
-                                   apiPort: Int? = nil) -> Data {
+                                   apiPort: Int? = nil,
+                                   probePort: Int? = nil) -> Data {
         let enc = JSONEncoder()
         enc.outputFormatting = [.sortedKeys, .prettyPrinted]
         return (try? enc.encode(compile(node: node, runtime: runtime, candidates: candidates,
-                                        apiPort: apiPort))) ?? Data()
+                                        apiPort: apiPort, probePort: probePort))) ?? Data()
     }
 
     // MARK: outbound
@@ -146,8 +155,17 @@ public enum XrayConfigCompiler {
     }
 
     private static func routing(mode: ProxyRoutingMode, auto: Bool,
-                                apiEnabled: Bool = false) -> XrayConfig.Routing {
+                                apiEnabled: Bool = false,
+                                probeEnabled: Bool = false) -> XrayConfig.Routing {
         var rules: [XrayConfig.Routing.Rule] = []
+        // 探测入口先于一切规则：强制走节点，绕过 geosite/geoip 的直连判定。
+        // 该入口只被本机的出口 IP 探测使用，不影响正常流量的路由。
+        if probeEnabled {
+            rules.append(.init(type: "field", ip: nil, domain: nil, protocols: nil, network: nil,
+                               outboundTag: auto ? nil : "proxy",
+                               balancerTag: auto ? "auto" : nil,
+                               inboundTag: ["probe-in"]))
+        }
         // API 入口的流量必须最先路由回 api 出口（xray 会为 api tag 隐式建 outbound）
         if apiEnabled {
             rules.append(.init(type: "field", ip: nil, domain: nil, protocols: nil, network: nil,
