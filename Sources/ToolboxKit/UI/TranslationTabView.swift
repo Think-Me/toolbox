@@ -20,6 +20,7 @@ struct TranslationTabView: View {
                 section("AI 引擎") { aiSection }
             }
         }
+        .scrollIndicators(.hidden)
         .frame(width: 560, height: 420)
         .onAppear { keyDraft = KeychainStore.aiKey ?? "" }
     }

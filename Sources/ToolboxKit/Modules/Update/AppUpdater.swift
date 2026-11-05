@@ -19,6 +19,10 @@ public enum AppUpdater {
     /// 发布仓库。换仓库改这里。
     public static let repo = "Think-Me/toolbox"
     public static var latestAPI: String { "https://api.github.com/repos/\(repo)/releases/latest" }
+    /// 供「手动下载」跳转的人类可读页面
+    public static var releasesPageURL: URL {
+        URL(string: "https://github.com/\(repo)/releases/latest")!
+    }
 
     // MARK: 纯逻辑（可测）
 

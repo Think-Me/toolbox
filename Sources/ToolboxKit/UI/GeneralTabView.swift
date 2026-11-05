@@ -19,6 +19,7 @@ struct GeneralTabView: View {
                 section("软件更新") { updateSection }
             }
         }
+        .scrollIndicators(.hidden)
         .frame(width: 560, height: 420)
     }
 
@@ -161,8 +162,12 @@ struct GeneralTabView: View {
                 Text("当前版本").frame(width: 120, alignment: .leading)
                 Text(u.currentVersion).font(.system(size: 12, design: .monospaced))
                 Spacer()
-                Button(u.isBusy ? "处理中…" : "检查更新") { Task { await u.check() } }
-                    .disabled(u.isBusy).controlSize(.small)
+                VStack(alignment: .trailing, spacing: 6) {
+                    Button(u.isBusy ? "处理中…" : "检查更新") { Task { await u.check() } }
+                        .disabled(u.isBusy).controlSize(.small)
+                    Button("手动下载") { NSWorkspace.shared.open(AppUpdater.releasesPageURL) }
+                        .controlSize(.small)
+                }
             }
             if let msg = u.message {
                 Text(msg).font(.system(size: 11)).foregroundStyle(.secondary)

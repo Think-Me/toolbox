@@ -19,6 +19,7 @@ struct ProxyTabView: View {
             }
             .padding(16)
         }
+        .scrollIndicators(.hidden)
         .frame(width: 560, height: 420)
         .onAppear {
             vm.startTrafficMonitoring()
