@@ -20,6 +20,14 @@ struct ProxyTabView: View {
             .padding(16)
         }
         .frame(width: 560, height: 420)
+        .onAppear {
+            vm.startTrafficMonitoring()
+            Task { await vm.refreshExitIPs() }
+        }
+        .onDisappear { vm.stopTrafficMonitoring() }
+        .onChange(of: vm.engineState) { _, newValue in
+            if case .running = newValue { Task { await vm.refreshExitIPs() } }
+        }
     }
 
     // MARK: 状态
@@ -30,6 +38,12 @@ struct ProxyTabView: View {
                 Circle().fill(engineColor).frame(width: 10, height: 10)
                 Text(engineLabel).font(.system(size: 13, weight: .medium))
                 Spacer()
+                if vm.isEngineRunning {
+                    Text(vm.trafficText)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
                 if let lat = vm.latencyText {
                     Text(lat).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
                 }
@@ -108,14 +122,18 @@ struct ProxyTabView: View {
 
     private var settingsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Picker("路由模式", selection: Binding(
-                get: { vm.library.runtime.routingMode },
-                set: { vm.setMode($0) })) {
-                ForEach(ProxyRoutingMode.allCases, id: \.self) { mode in
-                    Text(mode.label).tag(mode)
+            HStack(alignment: .top, spacing: 16) {
+                Picker("路由模式", selection: Binding(
+                    get: { vm.library.runtime.routingMode },
+                    set: { vm.setMode($0) })) {
+                    ForEach(ProxyRoutingMode.allCases, id: \.self) { mode in
+                        Text(mode.label).tag(mode)
+                    }
                 }
+                .pickerStyle(.radioGroup)
+                Spacer(minLength: 8)
+                exitIPPanel
             }
-            .pickerStyle(.radioGroup)
             HStack(spacing: 16) {
                 stepper("SOCKS", value: vm.library.runtime.socksPort) { vm.setPorts(socks: $0, http: vm.library.runtime.httpPort) }
                 stepper("HTTP", value: vm.library.runtime.httpPort) { vm.setPorts(socks: vm.library.runtime.socksPort, http: $0) }
@@ -138,6 +156,29 @@ struct ProxyTabView: View {
                     .font(.system(size: 10)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+
+    /// 路由模式右侧空白区的出口 IP 对照
+    private var exitIPPanel: some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            HStack(spacing: 6) {
+                Text("出口 IP").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                Button { Task { await vm.refreshExitIPs() } } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.mini)
+                .help("刷新出口 IP")
+            }
+            Text("代理：\(vm.proxyExitText)")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            Text("直连：\(vm.directExitText)")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
         }
     }
 

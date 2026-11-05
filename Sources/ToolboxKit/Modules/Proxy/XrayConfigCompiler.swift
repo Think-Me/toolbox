@@ -15,31 +15,46 @@ public enum XrayConfigCompiler {
     /// - Parameters:
     ///   - node: 当前选中的节点（手动模式用）
     ///   - candidates: 勾选进自动组的节点（自动模式用）
+    ///   - apiPort: 非 nil 时额外开启 Stats API（用于读取上下行流量）；nil 保持旧行为
     public static func compile(node: ProxyNode, runtime: ProxyRuntimeSettings,
-                               candidates: [ProxyNode] = []) -> XrayConfig {
+                               candidates: [ProxyNode] = [],
+                               apiPort: Int? = nil) -> XrayConfig {
         let group = runtime.autoSwitch ? (candidates.isEmpty ? [node] : candidates) : [node]
         let auto = runtime.autoSwitch && group.count >= 1
+        var inbounds: [XrayConfig.Inbound] = [
+            .init(port: runtime.socksPort, protocol: "socks", listen: "127.0.0.1",
+                  tag: "socks-in",
+                  settings: .init(auth: "noauth", udp: true, ip: "127.0.0.1")),
+            .init(port: runtime.httpPort, protocol: "http", listen: "127.0.0.1",
+                  tag: "http-in", settings: nil),
+        ]
+        if let apiPort {
+            // 只监听回环地址，供本机 `xray api statsquery` 查询流量统计
+            inbounds.append(.init(port: apiPort, protocol: "dokodemo-door", listen: "127.0.0.1",
+                                  tag: "api",
+                                  settings: .init(auth: nil, udp: nil, ip: nil, address: "127.0.0.1")))
+        }
         return XrayConfig(
             log: .init(loglevel: "warning"),
-            stats: auto ? .init() : nil,
+            stats: (auto || apiPort != nil) ? .init() : nil,
+            api: apiPort == nil ? nil : .init(tag: "api", services: ["StatsService"]),
             observatory: auto ? .init(subjectSelector: ["proxy"],
                                       probeInterval: "\(max(5, runtime.probeIntervalSeconds))s") : nil,
-            inbounds: [
-                .init(port: runtime.socksPort, protocol: "socks", listen: "127.0.0.1",
-                      tag: "socks-in",
-                      settings: .init(auth: "noauth", udp: true, ip: "127.0.0.1")),
-                .init(port: runtime.httpPort, protocol: "http", listen: "127.0.0.1",
-                      tag: "http-in", settings: nil),
-            ],
+            policy: apiPort == nil ? nil : .init(system: .init(
+                statsInboundUplink: true, statsInboundDownlink: true,
+                statsOutboundUplink: true, statsOutboundDownlink: true)),
+            inbounds: inbounds,
             outbounds: outbounds(group: group, auto: auto, mode: runtime.routingMode),
-            routing: routing(mode: runtime.routingMode, auto: auto))
+            routing: routing(mode: runtime.routingMode, auto: auto, apiEnabled: apiPort != nil))
     }
 
     public static func compileData(node: ProxyNode, runtime: ProxyRuntimeSettings,
-                                   candidates: [ProxyNode] = []) -> Data {
+                                   candidates: [ProxyNode] = [],
+                                   apiPort: Int? = nil) -> Data {
         let enc = JSONEncoder()
         enc.outputFormatting = [.sortedKeys, .prettyPrinted]
-        return (try? enc.encode(compile(node: node, runtime: runtime, candidates: candidates))) ?? Data()
+        return (try? enc.encode(compile(node: node, runtime: runtime, candidates: candidates,
+                                        apiPort: apiPort))) ?? Data()
     }
 
     // MARK: outbound
@@ -130,11 +145,16 @@ public enum XrayConfigCompiler {
                                 outboundTag: auto ? nil : "proxy", balancerTag: auto ? "auto" : nil)
     }
 
-    private static func routing(mode: ProxyRoutingMode, auto: Bool) -> XrayConfig.Routing {
-        var rules: [XrayConfig.Routing.Rule] = [
-            .init(type: "field", ip: ["geoip:private"], domain: nil, protocols: nil, network: nil, outboundTag: "direct", balancerTag: nil),
-            .init(type: "field", ip: nil, domain: nil, protocols: ["dns"], network: nil, outboundTag: "direct", balancerTag: nil),
-        ]
+    private static func routing(mode: ProxyRoutingMode, auto: Bool,
+                                apiEnabled: Bool = false) -> XrayConfig.Routing {
+        var rules: [XrayConfig.Routing.Rule] = []
+        // API 入口的流量必须最先路由回 api 出口（xray 会为 api tag 隐式建 outbound）
+        if apiEnabled {
+            rules.append(.init(type: "field", ip: nil, domain: nil, protocols: nil, network: nil,
+                               outboundTag: "api", balancerTag: nil, inboundTag: ["api"]))
+        }
+        rules.append(.init(type: "field", ip: ["geoip:private"], domain: nil, protocols: nil, network: nil, outboundTag: "direct", balancerTag: nil))
+        rules.append(.init(type: "field", ip: nil, domain: nil, protocols: ["dns"], network: nil, outboundTag: "direct", balancerTag: nil))
         switch mode {
         case .bypassMainland:
             rules.append(.init(type: "field", ip: nil, domain: ["geosite:cn"], protocols: nil, network: nil, outboundTag: "direct", balancerTag: nil))
@@ -162,16 +182,31 @@ public enum XrayConfigCompiler {
 public struct XrayConfig: Encodable {
     public let log: Log
     public let stats: Stats?
+    public let api: API?
     public let observatory: Observatory?
+    public let policy: Policy?
     public let inbounds: [Inbound]
     public let outbounds: [Outbound]
     public let routing: Routing
 
     public struct Log: Encodable { public let loglevel: String }
     public struct Stats: Encodable {}
+    public struct API: Encodable {
+        public let tag: String
+        public let services: [String]
+    }
     public struct Observatory: Encodable {
         public let subjectSelector: [String]
         public let probeInterval: String
+    }
+    public struct Policy: Encodable {
+        public let system: System
+        public struct System: Encodable {
+            public let statsInboundUplink: Bool
+            public let statsInboundDownlink: Bool
+            public let statsOutboundUplink: Bool
+            public let statsOutboundDownlink: Bool
+        }
     }
 
     public struct Inbound: Encodable {
@@ -184,6 +219,8 @@ public struct XrayConfig: Encodable {
             public let auth: String?
             public let udp: Bool?
             public let ip: String?
+            /// dokodemo-door（API 入口）的目标地址
+            public var address: String? = nil
         }
     }
 
@@ -268,8 +305,10 @@ public struct XrayConfig: Encodable {
             public let network: String?
             public let outboundTag: String?
             public let balancerTag: String?
+            /// 命中来源 inbound（如 api 入口）
+            public var inboundTag: [String]? = nil
             enum CodingKeys: String, CodingKey {
-                case type, ip, domain, network, outboundTag, balancerTag
+                case type, ip, domain, network, outboundTag, balancerTag, inboundTag
                 case protocols = "protocol"
             }
         }

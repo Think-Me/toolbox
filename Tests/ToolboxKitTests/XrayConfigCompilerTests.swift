@@ -290,3 +290,86 @@ private func vless(_ name: String, _ port: Int) -> ProxyNode {
     if p.isRunning { p.terminate(); p.waitUntilExit() }
     #expect(died == false, "自动切换(leastPing+observatory)配置应能被 xray 加载启动")
 }
+
+// MARK: Stats API（流量统计）
+
+@Test func apiPortAddsStatsAPIInboundPolicyAndRule() {
+    let node = ProxyNode(name: "n", kind: .vmess, server: "s", port: 1, uuid: "u")
+    let data = XrayConfigCompiler.compileData(node: node,
+                                             runtime: .init(routingMode: .bypassMainland),
+                                             apiPort: 12345)
+    let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+
+    #expect(root["stats"] != nil)
+    let api = (root["api"] as? [String: Any]) ?? [:]
+    #expect(api["tag"] as? String == "api")
+    #expect((api["services"] as? [String]) == ["StatsService"])
+
+    let system = (((root["policy"] as? [String: Any])?["system"]) as? [String: Any]) ?? [:]
+    #expect(system["statsInboundUplink"] as? Bool == true)
+    #expect(system["statsInboundDownlink"] as? Bool == true)
+
+    let inbounds = (root["inbounds"] as? [[String: Any]]) ?? []
+    #expect(inbounds.count == 3)
+    let apiInbound = inbounds.last ?? [:]
+    #expect(apiInbound["protocol"] as? String == "dokodemo-door")
+    #expect(apiInbound["tag"] as? String == "api")
+    #expect(apiInbound["port"] as? Int == 12345)
+
+    let rules = (((root["routing"] as? [String: Any])?["rules"]) as? [[String: Any]]) ?? []
+    #expect((rules.first?["inboundTag"] as? [String]) == ["api"])
+    #expect(rules.first?["outboundTag"] as? String == "api")
+}
+
+@Test func withoutAPIPortKeepsOldShape() {
+    let root = json(ProxyNode(name: "n", kind: .vmess, server: "s", port: 1, uuid: "u"), .bypassMainland)
+    #expect(root["api"] == nil)
+    #expect(root["policy"] == nil)
+    #expect(root["stats"] == nil)   // 非自动切换模式不应有 stats
+    #expect((root["inbounds"] as? [[String: Any]])?.count == 2)
+}
+
+@Test func configWithAPIPortExposesStatsAPI() throws {
+    let repoRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let vendor = repoRoot.appendingPathComponent("Vendor/xray")
+    let xray = vendor.appendingPathComponent("xray")
+    guard FileManager.default.isExecutableFile(atPath: xray.path) else { return }
+    guard let apiPort = LocalFreePort.allocate() else { return }
+
+    let tmp = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("api-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+    for f in ["geoip.dat", "geosite.dat"] {
+        try? FileManager.default.createSymbolicLink(
+            at: tmp.appendingPathComponent(f), withDestinationURL: vendor.appendingPathComponent(f))
+    }
+    let node = ProxyNode(name: "t", kind: .vmess, server: "127.0.0.1", port: 443, uuid: "u")
+    let cfg = tmp.appendingPathComponent("config.json")
+    try XrayConfigCompiler.compileData(node: node,
+        runtime: .init(socksPort: 21170, httpPort: 21171, routingMode: .bypassMainland),
+        apiPort: apiPort).write(to: cfg)
+
+    let p = Process()
+    p.executableURL = xray
+    p.arguments = ["run", "-c", cfg.path]
+    p.standardOutput = FileHandle.nullDevice
+    p.standardError = FileHandle.nullDevice
+    try p.run()
+    defer { if p.isRunning { p.terminate(); p.waitUntilExit() } }
+    usleep(1_800_000)
+    guard p.isRunning else {
+        Issue.record("带 apiPort 的配置未能启动 xray")
+        return
+    }
+
+    let q = Process()
+    q.executableURL = xray
+    q.arguments = ["api", "statsquery", "--server=127.0.0.1:\(apiPort)", "-pattern", "inbound>>>"]
+    q.standardOutput = Pipe()
+    q.standardError = FileHandle.nullDevice
+    try q.run()
+    q.waitUntilExit()
+    #expect(q.terminationStatus == 0, "Stats API 不可达：配置里的 api/inbound/routing 有误")
+}
+

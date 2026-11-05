@@ -11,6 +11,11 @@ public final class ProxyViewModel: ObservableObject {
     @Published public var message: String?
     @Published public var addField = ""
     @Published public var latencyText: String?
+    /// 经本地代理的实时上下行速率（仅代理页可见时轮询）
+    @Published public private(set) var traffic = TrafficSample.zero
+    @Published public var proxyExitIP: String?
+    @Published public var directExitIP: String?
+    @Published public var exitIPLoading = false
     @Published public var updateInfo: UpdateInfo?
     @Published public var updateBusy = false
     @Published public var updateProgress: Double?
@@ -23,6 +28,11 @@ public final class ProxyViewModel: ObservableObject {
     private let paths: AppPaths
     private let runner: XrayRunner
     public let engineAvailable: Bool
+
+    /// 本次运行分配到的 Stats API 端口（随配置一起下发给 xray）
+    private(set) var activeAPIPort: Int?
+    private var trafficTask: Task<Void, Never>?
+    private var lastTraffic: (counters: TrafficCounters, at: Date)?
 
     public init(paths: AppPaths = .standard()) {
         self.paths = paths
@@ -123,18 +133,31 @@ public final class ProxyViewModel: ObservableObject {
     /// 返回 nil 表示前置条件不满足（已设置 message）。
     private func currentConfig() -> Data? {
         let candidates = library.nodes.filter(\.balancerCandidate)
+        // 每次重编译都换一个空闲端口，避免固定端口被占用导致内核起不来
+        let apiPort = LocalFreePort.allocate()
+        let data: Data
         if library.runtime.autoSwitch {
             guard !candidates.isEmpty else {
                 message = "自动切换需至少勾选一个候选节点"; return nil
             }
             let node = activeNode ?? candidates[0]
-            return XrayConfigCompiler.compileData(node: node, runtime: library.runtime, candidates: candidates)
+            data = XrayConfigCompiler.compileData(node: node, runtime: library.runtime,
+                                                  candidates: candidates, apiPort: apiPort)
+        } else {
+            guard let node = activeNode else { message = "先添加并选择一个节点"; return nil }
+            data = XrayConfigCompiler.compileData(node: node, runtime: library.runtime,
+                                                  apiPort: apiPort)
         }
-        guard let node = activeNode else { message = "先添加并选择一个节点"; return nil }
-        return XrayConfigCompiler.compileData(node: node, runtime: library.runtime)
+        activeAPIPort = apiPort
+        return data
     }
 
-    public func stopEngine() { runner.stop() }
+    public func stopEngine() {
+        runner.stop()
+        activeAPIPort = nil
+        lastTraffic = nil
+        if traffic != .zero { traffic = .zero }
+    }
 
     private func restart() {
         guard let config = currentConfig() else { return }
@@ -170,6 +193,80 @@ public final class ProxyViewModel: ObservableObject {
         case .milliseconds(let ms): latencyText = "延迟 \(ms) ms"
         case .failed(let m): latencyText = "不通：\(m)"
         }
+    }
+
+    // MARK: 流量与出口 IP
+
+    public var trafficText: String { traffic.displayText }
+
+    public var proxyExitText: String {
+        guard isEngineRunning else { return "需启动代理" }
+        return proxyExitIP ?? (exitIPLoading ? "获取中…" : "获取失败")
+    }
+
+    public var directExitText: String {
+        directExitIP ?? (exitIPLoading ? "获取中…" : "获取失败")
+    }
+
+    /// 代理页可见时启动：每秒读一次 xray 的累计流量，换算成速率。
+    public func startTrafficMonitoring() {
+        guard trafficTask == nil else { return }
+        trafficTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.pollTrafficOnce()
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
+
+    /// 代理页不可见时停止，避免后台常驻轮询。
+    public func stopTrafficMonitoring() {
+        trafficTask?.cancel()
+        trafficTask = nil
+        lastTraffic = nil
+        if traffic != .zero { traffic = .zero }
+    }
+
+    private func pollTrafficOnce() async {
+        guard isEngineRunning, let port = activeAPIPort else {
+            lastTraffic = nil
+            return
+        }
+        let executable = paths.proxyDirectory.appendingPathComponent("xray")
+        let counters = await Task.detached(priority: .utility) {
+            XrayStatsClient.query(executable: executable, port: port)
+        }.value
+        // 内核刚起、API 尚未就绪时查不到，保留上一帧，不清零
+        guard let counters else { return }
+
+        let now = Date()
+        if let last = lastTraffic,
+           let sample = TrafficSample.rate(from: last.counters, to: counters,
+                                           elapsed: now.timeIntervalSince(last.at)) {
+            traffic = sample
+        } else {
+            traffic = .zero    // 首次采样或计数回退（内核重启清零）
+        }
+        lastTraffic = (counters, now)
+    }
+
+    /// 同时查直连与（若内核在跑）经代理的出口 IP。
+    public func refreshExitIPs() async {
+        guard !exitIPLoading else { return }
+        exitIPLoading = true
+        let running = isEngineRunning
+        let port = library.runtime.httpPort
+        async let directIP = ExitIPProbe.direct()
+        let proxyIP: String?
+        if running {
+            proxyIP = await ExitIPProbe.viaProxy(httpPort: port)
+        } else {
+            proxyIP = nil
+        }
+        directExitIP = await directIP
+        proxyExitIP = proxyIP
+        exitIPLoading = false
     }
 
     // MARK: 更新
