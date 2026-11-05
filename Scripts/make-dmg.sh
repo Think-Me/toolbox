@@ -11,7 +11,7 @@ APP="Build/Toolbox.app"
 DMG="Build/Toolbox.dmg"
 VOLNAME="Toolbox"
 
-[ -d "$APP" ] || { echo "找不到 $APP，先跑 ./Scripts/build-app.sh" >&2; exit 1; }
+[ -d "$APP" ] || { echo "找不到 ${APP}，先跑 ./Scripts/build-app.sh" >&2; exit 1; }
 
 STAGING="$(mktemp -d)"
 trap 'rm -rf "$STAGING"' EXIT
@@ -28,7 +28,7 @@ if [ -f "Scripts/dmg-assets/解除隔离.command" ]; then
 fi
 
 rm -f "$DMG"
-echo "生成 $DMG…"
+echo "生成 ${DMG}…"
 hdiutil create \
     -volname "$VOLNAME" \
     -srcfolder "$STAGING" \
@@ -49,4 +49,4 @@ MOUNT=""
 
 APPSZ=$(du -sh "$APP" | awk '{print $1}')
 DMGSZ=$(du -sh "$DMG" | awk '{print $1}')
-echo "打包完成：$DMG  （$APP 原大小 $APPSZ → dmg $DMGSZ）"
+echo "打包完成：${DMG}  （${APP} 原大小 ${APPSZ} → dmg ${DMGSZ}）"

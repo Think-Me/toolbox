@@ -25,7 +25,7 @@ for f in AppIcon.icns MenuBarIcon.png; do
     if [ -f "Resources/$f" ]; then
         cp "Resources/$f" "$APP/Contents/Resources/$f"
     else
-        echo "⚠️ 缺少 Resources/$f，先跑 ./Scripts/gen-icon-assets.py" >&2
+        echo "⚠️ 缺少 Resources/${f}，先跑 ./Scripts/gen-icon-assets.py" >&2
     fi
 done
 
@@ -51,7 +51,7 @@ fi
 # ad-hoc 的 designated requirement 是 cdhash，每次重建都变 → TCC 授权每次作废。
 IDENTITY="${TOOLBOX_SIGN_IDENTITY:-Toolbox Local Signing}"
 if security find-identity -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
-    echo "signing with: $IDENTITY（TCC 授权可跨重建保留）"
+    echo "signing with: ${IDENTITY}（TCC 授权可跨重建保留）"
     codesign --force --sign "$IDENTITY" --identifier com.ebertwiseman.toolbox "$APP"
 else
     echo "signing with: ad-hoc（⚠️ 每次重建都会掉 TCC 授权，跑一次 ./Scripts/create-signing-cert.sh 可解决）"
