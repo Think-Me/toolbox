@@ -207,8 +207,6 @@ public final class ProxyViewModel: ObservableObject {
 
     // MARK: 流量与出口 IP
 
-    public var trafficText: String { traffic.displayText }
-
     public var proxyExitText: String {
         guard isEngineRunning else { return "需启动代理" }
         return proxyExitIP ?? (exitIPLoading ? "获取中…" : "获取失败")

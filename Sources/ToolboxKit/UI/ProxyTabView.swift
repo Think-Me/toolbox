@@ -39,10 +39,12 @@ struct ProxyTabView: View {
                 Text(engineLabel).font(.system(size: 13, weight: .medium))
                 Spacer()
                 if vm.isEngineRunning {
-                    Text(vm.trafficText)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text(vm.traffic.upText).monospacedDigit()
+                        Text(vm.traffic.downText).monospacedDigit()
+                    }
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
                 }
                 if let lat = vm.latencyText {
                     Text(lat).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)

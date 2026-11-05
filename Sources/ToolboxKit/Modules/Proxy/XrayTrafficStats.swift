@@ -19,10 +19,10 @@ public struct TrafficSample: Equatable, Sendable {
         self.downPerSecond = downPerSecond
     }
 
-    /// 形如 "↑ 12.3 KB/s  ↓ 1.2 MB/s"
-    public var displayText: String {
-        "↑ \(TrafficRateFormatter.string(upPerSecond))  ↓ \(TrafficRateFormatter.string(downPerSecond))"
-    }
+    /// 上行单行文本，如 "↑ 12.3 KB/s"
+    public var upText: String { "↑ \(TrafficRateFormatter.string(upPerSecond))" }
+    /// 下行单行文本，如 "↓ 1.2 MB/s"
+    public var downText: String { "↓ \(TrafficRateFormatter.string(downPerSecond))" }
 
     /// 用两次累计采样求速率。计数回退（内核重启清零）或时间差非正时返回 nil。
     public static func rate(from previous: TrafficCounters, to current: TrafficCounters,
