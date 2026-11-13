@@ -111,7 +111,11 @@ public final class SelectionOverlayController {
                 // 必须先设它、再把 level 拉回 screenSaver。
                 w.isFloatingPanel = true
                 w.level = .screenSaver
-                w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+                // 只属于创建时所在的那个 Space：切桌面时遮罩随原桌面一起移走，
+                // 不会跟到新桌面上（canJoinAllSpaces 会让遮罩出现在所有 Space，
+                // 切桌面时表现为旧截图跟过去/卡在过渡画面）。
+                // fullScreenAuxiliary 保留：全屏 App 的 Space 里依然能盖在上面。
+                w.collectionBehavior = [.fullScreenAuxiliary]
                 w.contentView = v
                 v.onCommit = { [weak self] kind in self?.handle(kind) }
                 self.window = w
