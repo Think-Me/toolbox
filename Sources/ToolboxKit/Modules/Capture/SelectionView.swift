@@ -725,18 +725,22 @@ extension SelectionView: NSTextFieldDelegate {
     /// （否则 Esc 会被遮罩当成"取消截图"，回车会被当成"钉图"）。
     nonisolated public func control(_ control: NSControl, textView: NSTextView,
                                     doCommandBy commandSelector: Selector) -> Bool {
-        // 协议要求 nonisolated，但这个回调只可能在主线程来
-        MainActor.assumeIsolated {
+        // 协议要求 nonisolated，但这个回调只可能在主线程来。
+        // 只有回车/Esc 由我们消费；其余（Delete、方向键、粘贴…）必须返回 false，
+        // 让 field editor 自己处理。此前 default 分支的 return 只退出了闭包，
+        // 函数末尾无条件 return true，导致退格键被吞、文字删不掉。
+        return MainActor.assumeIsolated {
             switch commandSelector {
             case #selector(NSResponder.insertNewline(_:)):
                 endTextEditing(commit: true, typed: textView.string)
+                return true
             case #selector(NSResponder.cancelOperation(_:)):
                 endTextEditing(commit: false)
+                return true
             default:
-                return
+                return false
             }
         }
-        return true
     }
 
     /// 输入时实时改宽。和 doCommandBy 一样，协议要求 nonisolated，
