@@ -45,7 +45,7 @@ internal partial class TranslationPopup : Window
     {
         if (IsVisible)
         {
-            Close();
+            Dismiss();
             return;
         }
 
@@ -100,7 +100,7 @@ internal partial class TranslationPopup : Window
     {
         if (e.Key != Key.Escape) return;
         if (_pinned) return;   // 钉住时 Esc 不关，避免看译文时误触
-        Close();
+        Dismiss();
         e.Handled = true;
     }
 
@@ -141,7 +141,18 @@ internal partial class TranslationPopup : Window
         PinButton.Content = _pinned ? "已钉住" : "钉住";
     }
 
-    private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
+    /// <summary>
+    /// 关闭浮窗走 Hide 而不是 Close：Close 是终态（窗口不能再次 Show），
+    /// 而 App 缓存了这个实例 —— 关一次之后每次热键都会抛 InvalidOperationException。
+    /// 隐藏时顺带停掉朗读（原 OnClosed 的职责随 Close 一起消失，移到这里）。
+    /// </summary>
+    private void Dismiss()
+    {
+        _speaker.Stop();
+        Hide();
+    }
+
+    private void OnCloseClick(object sender, RoutedEventArgs e) => Dismiss();
 
     private void OnCopyClick(object sender, RoutedEventArgs e)
     {
