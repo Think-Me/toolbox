@@ -39,7 +39,7 @@ gh release create "$TAG" \
 
 for f in "$RELEASES_DIR"/*; do
   case "$(basename "$f")" in
-    Toolbox-win-Setup.exe|Toolbox-win-Portable.zip|*-full.nupkg|*-delta.nupkg|releases.win.json)
+    Toolbox-win-Setup.exe|*-full.nupkg|*-delta.nupkg|releases.win.json)
       gh release upload "$TAG" "$f" --clobber
       echo "  已上传 $(basename "$f")"
       ;;

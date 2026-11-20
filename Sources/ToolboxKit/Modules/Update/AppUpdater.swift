@@ -24,7 +24,28 @@ public enum AppUpdater {
         URL(string: "https://github.com/\(repo)/releases/latest")!
     }
 
+    /// Mac 更新判定用的内容版本资产名。统一版本号每版都会 bump，
+    /// 该文件里的 macBuild（= Info.plist 的 CFBundleVersion）只在 macOS 真改动时递增。
+    public static let macInfoAssetName = "mac.json"
+
     // MARK: 纯逻辑（可测）
+
+    /// 从 release JSON 里找 mac.json 资产的下载地址；旧 release 没有则返回 nil。
+    public static func macInfoURL(from releaseData: Data) -> URL? {
+        guard let obj = try? JSONSerialization.jsonObject(with: releaseData) as? [String: Any],
+              let assets = obj["assets"] as? [[String: Any]],
+              let asset = assets.first(where: { ($0["name"] as? String) == macInfoAssetName }),
+              let s = asset["browser_download_url"] as? String else { return nil }
+        return URL(string: s)
+    }
+
+    /// 解析 mac.json：`{"macBuild":17,"macVersion":"0.3.1"}`，数字/字符串都接受。
+    public static func parseMacBuild(_ data: Data) -> Int? {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if let n = obj["macBuild"] as? Int { return n }
+        if let s = obj["macBuild"] as? String { return Int(s) }
+        return nil
+    }
 
     /// 从 GitHub releases/latest 的 JSON 解析出 AppReleaseInfo；没有 .dmg 资产返回 nil。
     public static func parseRelease(_ data: Data) -> AppReleaseInfo? {
@@ -57,13 +78,33 @@ public enum AppUpdater {
     }
 
     /// 拿 fetcher 查最新版本并和当前版本比较。
-    public static func check(currentVersion: String, settings: UpdateSettings,
+    ///
+    /// 判定优先看 release 里的 `mac.json`（Mac 内容版本）：统一版本号每版都会 bump，
+    /// 不能直接拿来判断 macOS 有没有变，否则 Windows-only 发版会误推 Mac 更新。
+    /// 老 release 没有 mac.json 时退回归属的语义版本比较。
+    public static func check(currentVersion: String, currentBuild: Int? = nil,
+                             settings: UpdateSettings,
                              fetcher: any HTTPFetching) async -> AppUpdateStatus {
         let url = URL(string: latestAPI)!   // 代理与否由 fetcher 决定，不改 URL
         do {
             let data = try await fetcher.get(url)
             guard let info = parseRelease(data) else {
                 return .failed("没找到可下载的 .dmg 资产")
+            }
+            if let macURL = macInfoURL(from: data) {
+                do {
+                    let macData = try await fetcher.get(macURL)
+                    guard let releaseBuild = parseMacBuild(macData) else {
+                        return .failed("mac.json 格式错误")
+                    }
+                    if releaseBuild > (currentBuild ?? 0) {
+                        return .available(info)
+                    }
+                    return .upToDate(current: currentVersion)
+                } catch {
+                    // 读不到就不能退回版本号比较，否则又会出现无效更新
+                    return .failed("读取 mac.json 失败：\(error)")
+                }
             }
             if ProxyVersion.isNewer(info.version, than: currentVersion) {
                 return .available(info)

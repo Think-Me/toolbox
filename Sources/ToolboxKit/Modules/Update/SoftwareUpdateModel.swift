@@ -10,12 +10,17 @@ public final class SoftwareUpdateModel: ObservableObject {
     @Published public var message: String?
 
     public let currentVersion: String
+    /// Mac 内容版本（Info.plist 的 CFBundleVersion）。只有 macOS 真改动时才会递增，
+    /// 用于在「统一版本号 bump 但 Mac 没变」时避免无效更新。
+    public let currentBuild: Int
     private let settingsProvider: () -> UpdateSettings
 
     public init(settings: @escaping () -> UpdateSettings,
-                currentVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0") {
+                currentVersion: String = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0",
+                currentBuild: Int = (Bundle.main.infoDictionary?["CFBundleVersion"] as? String).flatMap { Int($0) } ?? 0) {
         self.settingsProvider = settings
         self.currentVersion = currentVersion
+        self.currentBuild = currentBuild
     }
 
     private func makeFetcher() -> any HTTPFetching {
@@ -26,6 +31,7 @@ public final class SoftwareUpdateModel: ObservableObject {
     public func check() async {
         isBusy = true; message = "检查更新中…"
         let result = await AppUpdater.check(currentVersion: currentVersion,
+                                            currentBuild: currentBuild,
                                             settings: settingsProvider(), fetcher: makeFetcher())
         status = result
         isBusy = false
