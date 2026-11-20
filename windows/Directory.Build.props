@@ -10,6 +10,6 @@
       CFBundleShortVersionString 一起 bump 到同一个 X.Y.Z（chore(release) 提交）。
       基线 0.2.6 = 当前线上 Windows 版本（stable feed）；首个统一版本从 0.3.0 起。
     -->
-    <Version>0.3.0</Version>
+    <Version>0.3.1</Version>
   </PropertyGroup>
 </Project>
