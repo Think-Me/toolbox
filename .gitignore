@@ -27,3 +27,6 @@ TestResults/
 *.user
 *.suo
 .vs/
+
+# IDE 本地产物（.openidea 是本机工具生成的临时工作区元数据）
+.openidea/
