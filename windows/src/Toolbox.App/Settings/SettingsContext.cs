@@ -50,5 +50,8 @@ internal sealed class SettingsContext
     /// <summary>代理编排器（代理页签的全部交互走它）。</summary>
     public required ProxyController Proxy { get; init; }
 
+    /// <summary>软件更新服务（通用页「软件更新」段的检查/下载/定时，BUG-008）。</summary>
+    public required Update.UpdateService Update { get; init; }
+
     public required Action<string> Log { get; init; }
 }

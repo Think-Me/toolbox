@@ -130,12 +130,149 @@ internal partial class SettingsWindow : Window
         var assembly = typeof(SettingsWindow).Assembly;
         var informational = assembly.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()
             ?.InformationalVersion;
-        VersionText.Text = "v" + (string.IsNullOrEmpty(informational) ? assembly.GetName().Version?.ToString(3) : informational);
+        var versionText = "v" + (string.IsNullOrEmpty(informational) ? assembly.GetName().Version?.ToString(3) : informational);
+        UpdateVersionText.Text = versionText;
 
         PathsText.Text = string.Join(Environment.NewLine,
             $"设置：{_context.Paths.Settings}",
             $"日志：{_context.Paths.LogsDirectory}",
             $"剪贴板库：{_context.Paths.ClipboardDatabase}");
+
+        LoadUpdateState();
+    }
+
+    // ---- 软件更新（BUG-008：对齐 Mac 通用页的软件更新段）----
+
+    private void LoadUpdateState()
+    {
+        var update = _context.Settings.Update;
+
+        AutoCheckUpdateCheck.IsChecked = update.AutoCheck;
+        IntervalRow.Visibility = update.AutoCheck ? Visibility.Visible : Visibility.Collapsed;
+        IntervalBox.Text = update.CheckIntervalHours.ToString();
+
+        UseProxyCheck.IsChecked = update.UseProxy;
+        ProxyPortRow.Visibility = update.UseProxy ? Visibility.Visible : Visibility.Collapsed;
+        ProxyPortBox.Text = update.ProxyPort.ToString();
+
+        MirrorBox.Text = update.GithubMirror;
+
+        _context.Update.Changed += OnUpdateServiceChanged;
+        _context.Update.StatusReported += OnUpdateStatusReported;
+        SyncInstallRow();
+    }
+
+    /// <summary>更新服务的状态变化（发现新版/下载进度/busy）回 UI 刷新。</summary>
+    private void OnUpdateServiceChanged()
+    {
+        if (!IsLoaded) return;
+        Dispatcher.BeginInvoke(SyncInstallRow);
+    }
+
+    /// <summary>更新服务的报告（气泡同款文本）回填到 UI 状态框。</summary>
+    private void OnUpdateStatusReported(string message)
+    {
+        if (!IsLoaded) return;
+        UpdateStatusText.Text = message;
+    }
+
+    private void SyncInstallRow()
+    {
+        var service = _context.Update;
+        var info = service.PendingInstall;
+        var hasUpdate = info is not null;
+        UpdateInstallRow.Visibility = hasUpdate ? Visibility.Visible : Visibility.Collapsed;
+        if (hasUpdate)
+        {
+            InstallUpdateButton.IsEnabled = !service.IsBusy;
+            InstallUpdateButton.Content = service.IsBusy ? "下载中…" : $"下载并安装 v{info!.TargetFullRelease.Version}";
+        }
+    }
+
+    private void OnCheckUpdateClick(object sender, RoutedEventArgs e)
+    {
+        UpdateStatusText.Text = "检查中…";
+        _context.Update.CheckForUpdates();
+    }
+
+    private void OnManualDownloadClick(object sender, RoutedEventArgs e) =>
+        _context.Update.OpenReleasesPage();
+
+    private void OnInstallUpdateClick(object sender, RoutedEventArgs e) =>
+        _context.Update.DownloadAndInstall();
+
+    private void OnAutoCheckClick(object sender, RoutedEventArgs e)
+    {
+        var settings = _context.Settings.Update;
+        settings.AutoCheck = AutoCheckUpdateCheck.IsChecked == true;
+        IntervalRow.Visibility = settings.AutoCheck ? Visibility.Visible : Visibility.Collapsed;
+        _context.SaveSettings();
+        _context.Update.RefreshTimer();
+        _context.Log($"自动检查更新 → {settings.AutoCheck}");
+    }
+
+    private void OnIntervalChanged(object sender, RoutedEventArgs e) => ApplyInterval();
+    private void OnIntervalKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter) ApplyInterval();
+    }
+
+    private void ApplyInterval()
+    {
+        var settings = _context.Settings.Update;
+        if (!int.TryParse(IntervalBox.Text, out var hours))
+        {
+            IntervalBox.Text = settings.CheckIntervalHours.ToString();
+            return;
+        }
+        var normalized = UpdateFeed.NormalizeIntervalHours(hours);
+        if (normalized != hours) IntervalBox.Text = normalized.ToString();
+        settings.CheckIntervalHours = normalized;
+        _context.SaveSettings();
+        _context.Update.RefreshTimer();
+    }
+
+    private void OnUseProxyClick(object sender, RoutedEventArgs e)
+    {
+        var settings = _context.Settings.Update;
+        settings.UseProxy = UseProxyCheck.IsChecked == true;
+        ProxyPortRow.Visibility = settings.UseProxy ? Visibility.Visible : Visibility.Collapsed;
+        _context.SaveSettings();
+        _context.Log($"更新走本地代理 → {settings.UseProxy}");
+    }
+
+    private void OnProxyPortChanged(object sender, RoutedEventArgs e) => ApplyProxyPort();
+    private void OnProxyPortKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter) ApplyProxyPort();
+    }
+
+    private void ApplyProxyPort()
+    {
+        var settings = _context.Settings.Update;
+        if (!int.TryParse(ProxyPortBox.Text, out var port))
+        {
+            ProxyPortBox.Text = settings.ProxyPort.ToString();
+            return;
+        }
+        var normalized = UpdateFeed.NormalizeProxyPort(port);
+        if (normalized != port) ProxyPortBox.Text = normalized.ToString();
+        settings.ProxyPort = normalized;
+        _context.SaveSettings();
+    }
+
+    private void OnMirrorChanged(object sender, RoutedEventArgs e)
+    {
+        var settings = _context.Settings.Update;
+        var mirror = MirrorBox.Text.Trim();
+        if (mirror.Length > 0 && !mirror.StartsWith("http://") && !mirror.StartsWith("https://"))
+        {
+            UpdateStatusText.Text = "镜像前缀需要以 http:// 或 https:// 开头";
+            MirrorBox.Text = settings.GithubMirror;
+            return;
+        }
+        settings.GithubMirror = mirror;
+        _context.SaveSettings();
     }
 
     private void OnLaunchAtLoginClick(object sender, RoutedEventArgs e)

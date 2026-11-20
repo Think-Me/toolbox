@@ -138,10 +138,41 @@ public sealed class AppSettings
     public Translation.TranslationSettings Translation { get; set; } = new();
 
     /// <summary>
+    /// 软件更新段（BUG-008：对齐 Mac 的 UpdateSettings）。
+    /// 之前 Windows 只有孤立的 updateUrl 字符串——没有手动检查、没有间隔、
+    /// 没有代理/镜像选项，更新行为完全黑盒。
+    /// </summary>
+    public SoftwareUpdateSettings Update { get; set; } = new();
+
+    /// <summary>
     /// 自动更新源：一个能直接下载 Velopack 产物的 URL（含 releases.win.json）。
     /// 留空 = 不检查更新。GitHub 建议固定一个 tag（例如 stable），把 vpk 产物反复替换上去。
     /// </summary>
     public string UpdateUrl { get; set; } = "https://github.com/Think-Me/toolbox/releases/download/stable";
+}
+
+/// <summary>
+/// 软件更新的行为设置（对齐 macOS UpdateSettings；字段语义与 Mac 一致，便于双端对照）。
+/// </summary>
+public sealed class SoftwareUpdateSettings
+{
+    /// <summary>启动时 + 定期自动检查。关掉后只能手动点「检查更新」。</summary>
+    public bool AutoCheck { get; set; } = true;
+
+    /// <summary>自动检查间隔（小时），1..168。</summary>
+    public int CheckIntervalHours { get; set; } = 24;
+
+    /// <summary>检查/下载走本地 HTTP 代理（GitHub 国内直连常失败）。</summary>
+    public bool UseProxy { get; set; }
+
+    /// <summary>代理端口（HTTP 代理）。</summary>
+    public int ProxyPort { get; set; } = 10809;
+
+    /// <summary>
+    /// GitHub 加速镜像前缀（如 https://ghproxy.net/）。非空时，下载 release 资产
+    /// 前缀它；feed 探测仍走代理或直连（对齐 Mac 语义）。
+    /// </summary>
+    public string GithubMirror { get; set; } = "";
 }
 
 public static class SettingsJson

@@ -27,11 +27,40 @@
                                Foreground="#B00020" TextWrapping="Wrap" />
 
                     <Separator Margin="0,16" />
-                    <TextBlock Text="关于" FontWeight="SemiBold" />
+                    <TextBlock Text="软件更新" FontWeight="SemiBold" />
                     <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                        <TextBlock Text="Toolbox for Windows" VerticalAlignment="Center" />
-                        <TextBlock x:Name="VersionText" Margin="8,0,0,0"
-                                   VerticalAlignment="Center" Foreground="#666" />
+                        <TextBlock Text="当前版本" VerticalAlignment="Center" />
+                        <TextBlock x:Name="UpdateVersionText" Margin="8,0,0,0" VerticalAlignment="Center" Foreground="#666" />
+                        <Button x:Name="CheckUpdateButton" Content="检查更新" Click="OnCheckUpdateClick"
+                                Padding="12,3" Margin="16,0,0,0" />
+                        <Button Content="手动下载" Click="OnManualDownloadClick"
+                                Padding="12,3" Margin="8,0,0,0" />
+                    </StackPanel>
+                    <TextBlock x:Name="UpdateStatusText" Margin="0,6,0,0" Foreground="#666"
+                               TextWrapping="Wrap" />
+                    <StackPanel x:Name="UpdateInstallRow" Orientation="Horizontal" Margin="0,6,0,0" Visibility="Collapsed">
+                        <Button x:Name="InstallUpdateButton" Content="下载并安装" Click="OnInstallUpdateClick"
+                                Padding="14,4" FontWeight="SemiBold" />
+                    </StackPanel>
+                    <CheckBox x:Name="AutoCheckUpdateCheck" Content="启动时及定期自动检查"
+                              Click="OnAutoCheckClick" Margin="0,10,0,0" />
+                    <StackPanel x:Name="IntervalRow" Orientation="Horizontal" Margin="20,6,0,0">
+                        <TextBlock Text="检查间隔" VerticalAlignment="Center" />
+                        <TextBox x:Name="IntervalBox" Width="48" Margin="8,0,0,0"
+                                 LostFocus="OnIntervalChanged" KeyDown="OnIntervalKeyDown" />
+                        <TextBlock Text="小时" Margin="6,0,0,0" VerticalAlignment="Center" Foreground="#777" />
+                    </StackPanel>
+                    <CheckBox x:Name="UseProxyCheck" Content="检查/下载走本地代理"
+                              Click="OnUseProxyClick" Margin="0,10,0,0" />
+                    <StackPanel x:Name="ProxyPortRow" Orientation="Horizontal" Margin="20,6,0,0">
+                        <TextBlock Text="代理端口" VerticalAlignment="Center" />
+                        <TextBox x:Name="ProxyPortBox" Width="64" Margin="8,0,0,0"
+                                 LostFocus="OnProxyPortChanged" KeyDown="OnProxyPortKeyDown" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <TextBlock Text="加速镜像" VerticalAlignment="Center" />
+                        <TextBox x:Name="MirrorBox" Width="260" Margin="8,0,0,0"
+                                 LostFocus="OnMirrorChanged" ToolTip="如 https://ghproxy.net/（留空=不用）。镜像不适用于应用内自动更新，仅供手动下载参考。" />
                     </StackPanel>
 
                     <Separator Margin="0,16" />
