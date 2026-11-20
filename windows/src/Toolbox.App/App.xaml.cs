@@ -53,6 +53,7 @@ public partial class App : Application
     private PinManager? _pinManager;
     private CaptureOverlay? _captureOverlay;
     private ProxyController? _proxyController;
+    private Update.UpdateService? _updateService;
     private bool _applyingHosts;
     private DispatcherTimer? _clipboardCoalesce;
 
@@ -173,11 +174,16 @@ public partial class App : Application
         // 下载完只 stage：WaitExitThenApplyUpdates 启动 Update.exe 等本进程**优雅退出**（最多 60s）
         // 再应用并重启 —— 绝不能在这里 ApplyUpdatesAndRestart（它当场硬杀进程，OnExit 的
         // 注销热键/关系统代理/停引擎清理全被绕过，开着系统代理更新=用户全网断网，BUG-001）。
+        // BUG-008：UpdateService 升级为完整服务（手动检查/下载安装/定时器/代理），
+        // 设置段对齐 Mac 的 UpdateSettings（autoCheck/间隔/代理端口）。
         var updateService = new UpdateService(
             () => _settings.UpdateUrl,
+            () => _settings.Update,
             ReportStatus,
-            (manager, updateInfo) => manager.WaitExitThenApplyUpdates(updateInfo));
-        updateService.CheckForUpdates();
+            (manager, updateInfo) => manager.WaitExitThenApplyUpdates(updateInfo),
+            () => _store?.Save(_settings));
+        updateService.Start();
+        _updateService = updateService;
 
         // 代理内核：有可用节点就自动拉起（不碰系统代理；探针模式已在上面 return）
         _proxyController.AutoStartIfPossible();
@@ -393,10 +399,22 @@ public partial class App : Application
     {
         // 已有遮罩窗开着就复用（置顶激活），否则每次热键都叠一层——
         // 实测连按两次热键会出现两层遮罩互相干扰，用户点的是上面那层、看的也是上面那层。
-        if (_captureOverlay is { IsLoaded: true })
+        // BUG-007：复用前必须健康自检。遮罩可能在显示拓扑变化后变成「空壳」
+        // （HWND 在、可见，但视觉树已死：点击穿透、Esc 无响应）。复用一个空壳
+        // 等于把截图功能锁死到 App 重启。判定逻辑在 Core 的 OverlayHealth（有测试）。
+        if (_captureOverlay is { IsLoaded: true } existing)
         {
-            _captureOverlay.Activate();
-            return;
+            var virtualWidth = SystemParameters.VirtualScreenWidth;
+            var virtualHeight = SystemParameters.VirtualScreenHeight;
+            if (existing.IsHealthyForReuse(virtualWidth, virtualHeight))
+            {
+                _log?.Info("截图：复用现有遮罩");
+                existing.Activate();
+                return;
+            }
+            _log?.Info("截图：旧遮罩已失效（空壳/尺寸过时），关闭后重建");
+            existing.Close();
+            _captureOverlay = null;
         }
 
         _log?.Info("截图：开始抓屏");
@@ -707,6 +725,7 @@ public partial class App : Application
         }),
         SyncHostsRule = SyncHostsRule,
         Proxy = _proxyController!,
+        Update = _updateService!,
         Log = message => _log?.Info(message),
     };
 

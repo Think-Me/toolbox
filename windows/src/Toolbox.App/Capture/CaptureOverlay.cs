@@ -268,7 +268,33 @@ internal sealed class CaptureOverlay : Window
     {
         if (msg is 0x0201 or 0x0202)   // WM_LBUTTONDOWN / WM_LBUTTONUP
             _trace?.Invoke($"遮罩 WndProc msg=0x{msg:X} pos=({lParam.ToInt32() & 0xFFFF},{(lParam.ToInt32() >> 16) & 0xFFFF})");
+
+        // BUG-007：分辨率/显示拓扑变化后，本遮罩的尺寸与冻结位图都已过时
+        // （实测形态：空壳窗口 rect=(-7,-7,2567,1447)，点击穿透、Esc 无响应，
+        // 且被 App 的复用分支反复激活 = 截图功能本会话报废）。
+        // 主动自毁：WM_DISPLAYCHANGE 到达即关闭自己，Closed 事件会让 App 置空
+        // _captureOverlay，下次热键走全新建窗路径。
+        if (msg is 0x007E)   // WM_DISPLAYCHANGE
+        {
+            _trace?.Invoke("遮罩收到 WM_DISPLAYCHANGE：显示拓扑已变，主动关闭（过时遮罩不可复用）");
+            handled = true;
+            Dispatcher.BeginInvoke(Close);
+        }
         return IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// 复用前的健康自检（BUG-007）：遮罩可能处于「空壳」状态——HWND 在、可见，
+    /// 但视觉树已死（无子元素、点击穿透、Esc 无响应）。空壳的成因链与
+    /// 显示拓扑变化强相关，但为了稳妥，复用方（App.StartCapture）应同时校验
+    /// 视觉树与尺寸两项（判定逻辑在 Core 的 OverlayHealth，有单元测试）。
+    /// </summary>
+    public bool IsHealthyForReuse(double desktopWidth, double desktopHeight)
+    {
+        var childCount = Content is Canvas canvas ? canvas.Children.Count : 0;
+        return OverlayHealth.ShouldReuse(
+            IsVisible && IsLoaded, childCount,
+            ActualWidth, ActualHeight, desktopWidth, desktopHeight);
     }
 
     // ---- 工具栏 ----
