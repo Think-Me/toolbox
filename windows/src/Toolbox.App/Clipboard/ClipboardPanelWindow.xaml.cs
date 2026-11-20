@@ -91,7 +91,7 @@ internal partial class ClipboardPanelWindow : Window
 
         StatusText.Text = _items.Count == 0
             ? "没有匹配的记录"
-            : $"{_items.Count} 条 · ↑↓ 选择 · Enter 粘贴 · Ctrl+E 贴图 · Ctrl+P 置顶 · Del 删除 · Esc 关闭";
+            : $"{_items.Count} 条 · ↑↓ 选择 · Enter 粘贴 · Ctrl+E 贴图 · Ctrl+P 置顶 · Shift+Del 删除 · Esc 关闭";
     }
 
     /// <summary>图片缩略图。DecodePixelWidth=48：几百张 4K 图也不会把内存吃光。</summary>
@@ -164,6 +164,16 @@ internal partial class ClipboardPanelWindow : Window
                 return;
 
             case Key.Delete:
+                // 删条目必须显式：焦点在搜索框时 Delete 是编辑字符（用户改搜索词），
+                // 无条件删条目会把改词变成误删历史（BUG-004，无确认无撤销）。
+                // Shift+Delete 保持键盘删除能力：修饰键表达的是明确意图。
+                if (Keyboard.Modifiers == ModifierKeys.Shift)
+                {
+                    DeleteCurrent();
+                    e.Handled = true;
+                    return;
+                }
+                if (ReferenceEquals(Keyboard.FocusedElement, SearchBox)) break;   // 放行给文本框删字符
                 DeleteCurrent();
                 e.Handled = true;
                 return;
