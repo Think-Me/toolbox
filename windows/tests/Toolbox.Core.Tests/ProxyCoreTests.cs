@@ -219,6 +219,29 @@ public sealed class XrayRunnerTests : IDisposable
         Assert.Equal(3, _spawned.Count);   // 首次 + 2 次退避，第 3 次崩溃后放弃
     }
 
+    /// <summary>
+    /// BUG-005：崩溃退避循环期间不应反复广播 Running —— 状态没变。
+    /// 实测假节点下 8 秒刷 8+ 行「代理引擎 → Running」，真实故障排查时噪声淹没信号。
+    /// 广播契约：状态值变化时才发（Running 只在首次 Stopped→Running 时出现一次；
+    /// 放弃时报 Failed）。轮询/查询方用 CurrentState，不受影响。
+    /// </summary>
+    [Fact]
+    public void BackoffLoopDoesNotRebroadcastRunning()
+    {
+        var runner = NewRunner(maxAttempts: 5);
+        var running = 0;
+        runner.OnStateChange = (state, _) => { if (state == XrayRunner.State.Running) running++; };
+
+        runner.Start("{}");
+        Assert.Equal(1, running);   // Stopped → Running：首次启动，1 次
+
+        // 崩溃 → 退避重启（schedule 立即执行），状态始终停在 Running
+        for (var i = 0; i < 3; i++) _spawned[^1].SimulateExit();
+
+        Assert.Equal(XrayRunner.State.Running, runner.CurrentState);
+        Assert.Equal(1, running);   // 退避期间不得追加 Running 广播（BUG-005：当前实现会加到 4）
+    }
+
     private sealed class FakeProcess : IXrayProcess
     {
         public bool IsRunning { get; private set; }

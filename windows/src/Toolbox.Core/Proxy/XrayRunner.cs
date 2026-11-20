@@ -22,6 +22,13 @@ public sealed class ProcessXray : IXrayProcess
     private readonly string _arguments;
     private readonly string _workingDirectory;
     private System.Diagnostics.Process? _process;
+    /// <summary>
+    /// 本实例托管子进程的 Job Object 句柄（KILL_ON_JOB_CLOSE）。
+    /// 持有句柄的本进程死亡时系统会关闭句柄，job 里的 xray 随之被杀 ——
+    /// 这是「App 崩溃/被强杀/更新硬重启不留孤儿 xray 占端口」的唯一可靠机制（BUG-006）。
+    /// 公开给测试做限额断言；运行时无其它用途。
+    /// </summary>
+    public IntPtr JobHandle { get; private set; }
 
     public ProcessXray(string executable, string arguments, string workingDirectory)
     {
@@ -61,6 +68,7 @@ public sealed class ProcessXray : IXrayProcess
             OnExit?.Invoke();
         };
         if (!process.Start()) throw new InvalidOperationException("进程启动失败");
+        EnsureKillOnCloseJob(process);
         _process = process;
     }
 
@@ -69,6 +77,77 @@ public sealed class ProcessXray : IXrayProcess
         _killed = true;
         if (_process is { HasExited: false } process) process.Kill(entireProcessTree: true);
         _process = null;
+    }
+
+    /// <summary>
+    /// 把子进程放进一个 KILL_ON_JOB_CLOSE 的 Job Object。
+    /// 句柄留在本进程：本进程死（任何方式，包括 taskkill）→ 系统关句柄 → 子进程被杀。
+    /// Job 每实例一个、跨 Launch 复用：退避重启的新进程进同一个 job，语义一致。
+    /// </summary>
+    private void EnsureKillOnCloseJob(Process process)
+    {
+        const uint jobObjectExtendedLimitInformation = 9;
+        const uint jobObjectLimitKillOnJobClose = 0x2000;
+
+        if (JobHandle == IntPtr.Zero)
+        {
+            JobHandle = Native.CreateJobObject(IntPtr.Zero, null);
+            if (JobHandle == IntPtr.Zero) return;   // 建不出来就退化为无绑定（老行为），不阻断启动
+
+            var info = new Native.JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+            info.BasicLimitInformation.LimitFlags = jobObjectLimitKillOnJobClose;
+            Native.SetInformationJobObject(JobHandle, jobObjectExtendedLimitInformation,
+                ref info, (uint)System.Runtime.InteropServices.Marshal.SizeOf<Native.JOBOBJECT_EXTENDED_LIMIT_INFORMATION>());
+        }
+
+        Native.AssignProcessToJobObject(JobHandle, process.Handle);
+    }
+
+    private static class Native
+    {
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr CreateJobObject(IntPtr attributes, string? name);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        public static extern bool SetInformationJobObject(IntPtr job, uint infoClass,
+            ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION info, uint size);
+
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+        public static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        public struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+        {
+            public long PerProcessUserTimeLimit;
+            public long PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize;
+            public UIntPtr MaximumWorkingSetSize;
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity;
+            public uint PriorityClass;
+            public uint SchedulingClass;
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        public struct IO_COUNTERS
+        {
+            public ulong ReadOperationCount, WriteOperationCount, OtherOperationCount;
+            public ulong ReadTransferCount, WriteTransferCount, OtherTransferCount;
+        }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        public struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+        {
+            public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+            public IO_COUNTERS IoInfo;
+            public UIntPtr ProcessMemoryLimit;
+            public UIntPtr JobMemoryLimit;
+            public UIntPtr PeakProcessMemoryUsed;
+            public UIntPtr PeakJobMemoryUsed;
+        }
     }
 }
 
@@ -242,9 +321,15 @@ public sealed class XrayRunner
         }
     }
 
+    /// <summary>
+    /// 状态值没变就不广播（BUG-005）：崩溃退避循环里 Running→Running 的重复通知
+    /// 会在日志里刷屏（实测 8 秒 8+ 行），真实故障的信号被噪声淹没。
+    /// Failed 携带放弃语义、每次崩溃计数不同，仍然无条件广播。
+    /// </summary>
     private void Transition(State state, string? message)
     {
+        var unchanged = state == _state && state != State.Failed;
         _state = state;
-        OnStateChange?.Invoke(state, message);
+        if (!unchanged) OnStateChange?.Invoke(state, message);
     }
 }
