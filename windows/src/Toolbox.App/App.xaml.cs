@@ -170,10 +170,13 @@ public partial class App : Application
         }
 
         // 自动更新：仅安装版生效（绿色目录/调试跳过）；网络不可用静默降级
+        // 下载完只 stage：WaitExitThenApplyUpdates 启动 Update.exe 等本进程**优雅退出**（最多 60s）
+        // 再应用并重启 —— 绝不能在这里 ApplyUpdatesAndRestart（它当场硬杀进程，OnExit 的
+        // 注销热键/关系统代理/停引擎清理全被绕过，开着系统代理更新=用户全网断网，BUG-001）。
         var updateService = new UpdateService(
             () => _settings.UpdateUrl,
             ReportStatus,
-            (manager, updateInfo) => manager.ApplyUpdatesAndRestart(updateInfo));
+            (manager, updateInfo) => manager.WaitExitThenApplyUpdates(updateInfo));
         updateService.CheckForUpdates();
 
         // 代理内核：有可用节点就自动拉起（不碰系统代理；探针模式已在上面 return）

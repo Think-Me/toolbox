@@ -48,8 +48,8 @@ internal sealed class UpdateService
                 var version = updateInfo.TargetFullRelease.Version;
                 _report($"发现新版本 {version}，后台下载中…");
                 await manager.DownloadUpdatesAsync(updateInfo);
-                _applyOnExit(manager, updateInfo);
                 _report($"新版本 {version} 已就绪，下次退出 Toolbox 时自动安装");
+                _applyOnExit(manager, updateInfo);
             }
             catch (Exception error)
             {
