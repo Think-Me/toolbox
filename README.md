@@ -10,7 +10,8 @@
 
 纯菜单栏（`LSUIElement`）App，不占 Dock；Swift + AppKit（设置页用 SwiftUI）。
 
-> Windows 移植在 `windows/`（.NET 10 + WPF）。核心逻辑已完成并通过 58 个测试，界面层尚未实现，详见 [windows/README.md](windows/README.md)。
+> Windows 移植在 `windows/`（.NET 10 + WPF），功能已对齐并经真机 E2E 测试，详见
+> [windows/README.md](windows/README.md)。**双端统一版本号、共同发版：流程见 [RELEASING.md](RELEASING.md)。**
 
 ## 环境要求
 

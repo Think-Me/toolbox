@@ -6,6 +6,7 @@
 *.sh      text eol=lf
 *.command text eol=lf
 Makefile  text eol=lf
+RELEASING.md text eol=lf
 
 # 二进制资源，不做换行转换
 *.icns binary
