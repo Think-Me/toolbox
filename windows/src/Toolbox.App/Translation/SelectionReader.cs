@@ -50,8 +50,24 @@ internal static class SelectionReader
         var previous = TryGetClipboardText();
         markSelfWrite();
 
+        // 剪贴板里有文本时先写一次性哨兵（每次唯一）：
+        // 「Ctrl+C 之后读到的还是哨兵」= 目标真的什么都没复制（没有选区）。
+        // 不能用「读到 == 复制前的内容」判定 —— 用户划选的文本完全可能就是上次复制的
+        // 那段（BUG-002：那种情况会被误判成没有选区，翻译直接不弹窗）。
+        // 剪贴板没有文本（空 / 图片）时不写哨兵：哨兵会覆盖掉用户的图片内容，
+        // 且这种情况下读到任何非空文本都不可能是「旧内容」，旧判定本来就是对的。
+        var sentinel = string.IsNullOrEmpty(previous)
+            ? null
+            : $"toolbox-sentinel-{Guid.NewGuid():N}";
+        if (sentinel is not null)
+        {
+            if (!ClipboardPaste.WriteText(sentinel)) return null;
+            markSelfWrite();
+        }
+
         if (!ClipboardPaste.SendCombo(NativeMethods.VkControl, NativeMethods.VkC).Ok)
         {
+            RestorePrevious(previous);
             markSelfWrite();   // 后面的恢复动作也可能动剪贴板，标记要续期
             return null;
         }
@@ -60,10 +76,18 @@ internal static class SelectionReader
         Thread.Sleep(120);
         var text = TryGetClipboardText();
 
-        if (!string.IsNullOrEmpty(previous)) ClipboardPaste.WriteText(previous);
+        RestorePrevious(previous);
         markSelfWrite();
 
-        return string.IsNullOrWhiteSpace(text) || text == previous ? null : text!.Trim();
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        if (sentinel is not null && text == sentinel) return null;
+        return text.Trim();
+    }
+
+    /// <summary>把复制前的文本写回去。非文本剪贴板（图片等）无法精确还原，保持调用前的行为。</summary>
+    private static void RestorePrevious(string? previous)
+    {
+        if (!string.IsNullOrEmpty(previous)) ClipboardPaste.WriteText(previous);
     }
 
     private static string? TryGetClipboardText()
